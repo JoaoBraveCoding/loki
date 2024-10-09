@@ -18,7 +18,6 @@ import (
 	"github.com/grafana/loki/v3/pkg/util/cfg"
 	lokiring "github.com/grafana/loki/v3/pkg/util/ring"
 
-	"github.com/grafana/loki/v3/pkg/ruler/rulestore"
 	"github.com/grafana/loki/v3/pkg/ruler/rulestore/local"
 	loki_net "github.com/grafana/loki/v3/pkg/util/net"
 )
@@ -571,10 +570,6 @@ func applyStorageConfig(cfg, defaults *ConfigWrapper) error {
 		configsFound++
 
 		applyConfig = func(r *ConfigWrapper) {
-			r.Ruler.StoreConfig.ThanosObjStore = r.Common.Storage.ThanosObjStore
-			r.Ruler.StoreConfig.ObjStoreConf = rulestore.Config{
-				Config: r.Common.Storage.ObjStoreConf,
-			}
 			r.StorageConfig.ThanosObjStore = r.Common.Storage.ThanosObjStore
 			r.StorageConfig.ObjStoreConf = r.Common.Storage.ObjStoreConf
 			r.StorageConfig.Hedging = r.Common.Storage.Hedging
