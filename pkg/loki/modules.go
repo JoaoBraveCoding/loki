@@ -1237,12 +1237,8 @@ func (t *Loki) initRulerStorage() (_ services.Service, err error) {
 			return nil, err
 		}
 	}
-	overrides, err := validation.NewOverrides(t.Cfg.LimitsConfig, t.TenantLimits)
-	if err != nil {
-		return nil, err
-	}
 
-	t.RulerStorage, err = base_ruler.NewLegacyRuleStore(t.Cfg.Ruler.StoreConfig, overrides, t.Cfg.StorageConfig.Hedging, t.ClientMetrics, ruler.GroupLoader{}, util_log.Logger)
+	t.RulerStorage, err = base_ruler.NewLegacyRuleStore(t.Cfg.Ruler.StoreConfig, t.Cfg.StorageConfig.Hedging, t.ClientMetrics, ruler.GroupLoader{}, util_log.Logger)
 
 	return
 }
