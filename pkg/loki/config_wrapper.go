@@ -571,7 +571,6 @@ func applyStorageConfig(cfg, defaults *ConfigWrapper) error {
 
 		applyConfig = func(r *ConfigWrapper) {
 			r.StorageConfig.ObjectStore = r.Common.Storage.ObjectStore
-			r.StorageConfig.Hedging = r.Common.Storage.Hedging
 		}
 	}
 
