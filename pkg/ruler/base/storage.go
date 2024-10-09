@@ -144,8 +144,7 @@ func NewRuleStore(ctx context.Context, cfg rulestore.Config, cfgProvider bucket.
 	if cfg.Backend == local.Name {
 		return local.NewLocalRulesClient(cfg.Local, loader)
 	}
-	metrics := &bucket.Metrics{Registerer: reg}
-	bucketClient, err := bucket.NewClient(ctx, cfg.Config, "ruler-storage", logger, metrics)
+	bucketClient, err := bucket.NewClient(ctx, cfg.Config, "ruler-storage", logger)
 	if err != nil {
 		return nil, err
 	}

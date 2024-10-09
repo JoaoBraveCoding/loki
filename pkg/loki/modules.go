@@ -1411,7 +1411,6 @@ func (t *Loki) initCompactor() (services.Service, error) {
 	}
 
 	objectClients := make(map[config.DayTime]client.ObjectClient)
-	metrics := &client.Metrics{Registerer: prometheus.DefaultRegisterer}
 	for _, periodConfig := range t.Cfg.SchemaConfig.Configs {
 		if !config.IsObjectStorageIndex(periodConfig.IndexType) {
 			continue
@@ -1420,7 +1419,7 @@ func (t *Loki) initCompactor() (services.Service, error) {
 		var objectClient client.ObjectClient
 		var err error
 		if t.Cfg.StorageConfig.ThanosObjStore {
-			objectClient, err = storage.NewObjectClientV2("compactor", periodConfig.ObjectType, t.Cfg.StorageConfig, metrics)
+			objectClient, err = storage.NewObjectClientV2("compactor", periodConfig.ObjectType, t.Cfg.StorageConfig)
 		} else {
 			objectClient, err = storage.NewObjectClient(periodConfig.ObjectType, t.Cfg.StorageConfig, t.ClientMetrics)
 		}
@@ -1435,8 +1434,7 @@ func (t *Loki) initCompactor() (services.Service, error) {
 	if t.Cfg.CompactorConfig.RetentionEnabled {
 		if deleteStore := t.Cfg.CompactorConfig.DeleteRequestStore; deleteStore != "" {
 			if t.Cfg.StorageConfig.ThanosObjStore {
-				metrics := &client.Metrics{Registerer: prometheus.DefaultRegisterer}
-				deleteRequestStoreClient, err = storage.NewObjectClientV2("compactor", deleteStore, t.Cfg.StorageConfig, metrics)
+				deleteRequestStoreClient, err = storage.NewObjectClientV2("compactor", deleteStore, t.Cfg.StorageConfig)
 			} else {
 				deleteRequestStoreClient, err = storage.NewObjectClient(deleteStore, t.Cfg.StorageConfig, t.ClientMetrics)
 			}
@@ -1755,8 +1753,7 @@ func (t *Loki) initAnalytics() (services.Service, error) {
 
 	var objectClient client.ObjectClient
 	if t.Cfg.StorageConfig.ThanosObjStore {
-		metrics := &client.Metrics{Registerer: prometheus.DefaultRegisterer}
-		objectClient, err = storage.NewObjectClientV2("analytics", period.ObjectType, t.Cfg.StorageConfig, metrics)
+		objectClient, err = storage.NewObjectClientV2("analytics", period.ObjectType, t.Cfg.StorageConfig)
 	} else {
 		objectClient, err = storage.NewObjectClient(period.ObjectType, t.Cfg.StorageConfig, t.ClientMetrics)
 	}

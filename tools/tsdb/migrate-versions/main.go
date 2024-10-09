@@ -102,8 +102,7 @@ func migrateTables(pCfg config.PeriodConfig, storageCfg storage.Config, clientMe
 	var objClient client.ObjectClient
 	var err error
 	if storageCfg.ThanosObjStore {
-		metrics := &client.Metrics{Registerer: prometheus.DefaultRegisterer}
-		objClient, err = storage.NewObjectClientV2("tables-migration-tool", pCfg.ObjectType, storageCfg, metrics)
+		objClient, err = storage.NewObjectClientV2("tables-migration-tool", pCfg.ObjectType, storageCfg)
 	} else {
 		objClient, err = storage.NewObjectClient(pCfg.ObjectType, storageCfg, clientMetrics)
 	}

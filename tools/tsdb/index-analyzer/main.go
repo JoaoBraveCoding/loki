@@ -27,8 +27,7 @@ func main() {
 
 	var objectClient client.ObjectClient
 	if conf.StorageConfig.ThanosObjStore {
-		metrics := &client.Metrics{Registerer: prometheus.DefaultRegisterer}
-		objectClient, err = storage.NewObjectClientV2("index-analyzer", periodCfg.ObjectType, conf.StorageConfig, metrics)
+		objectClient, err = storage.NewObjectClientV2("index-analyzer", periodCfg.ObjectType, conf.StorageConfig)
 	} else {
 		objectClient, err = storage.NewObjectClient(periodCfg.ObjectType, conf.StorageConfig, clientMetrics)
 	}
