@@ -286,7 +286,7 @@ func (s *LokiStore) storeForPeriod(p config.PeriodConfig, tableRange config.Tabl
 
 		var objectClient client.ObjectClient
 		var err error
-		if s.cfg.ThanosObjStore {
+		if s.cfg.UseThanosObjstore {
 			objectClient, err = NewObjectClientV2(component, p.ObjectType, s.cfg)
 		} else {
 			objectClient, err = NewObjectClient(p.ObjectType, s.cfg, s.clientMetrics)

@@ -26,7 +26,7 @@ func main() {
 	helpers.ExitErr("find period config for bucket", err)
 
 	var objectClient client.ObjectClient
-	if conf.StorageConfig.ThanosObjStore {
+	if conf.StorageConfig.UseThanosObjstore {
 		objectClient, err = storage.NewObjectClientV2("index-analyzer", periodCfg.ObjectType, conf.StorageConfig)
 	} else {
 		objectClient, err = storage.NewObjectClient(periodCfg.ObjectType, conf.StorageConfig, clientMetrics)

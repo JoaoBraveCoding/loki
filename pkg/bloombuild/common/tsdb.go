@@ -192,7 +192,7 @@ func NewTSDBStores(
 		if cfg.IndexType == types.TSDBType {
 			var c client.ObjectClient
 			var err error
-			if storeCfg.ThanosObjStore {
+			if storeCfg.UseThanosObjstore {
 				c, err = baseStore.NewObjectClientV2(component, cfg.ObjectType, storeCfg)
 			} else {
 				c, err = baseStore.NewObjectClient(cfg.ObjectType, storeCfg, clientMetrics)

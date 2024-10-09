@@ -336,7 +336,7 @@ func NewBloomStore(
 	for _, periodicConfig := range periodicConfigs {
 		var objectClient client.ObjectClient
 		var err error
-		if storageConfig.ThanosObjStore {
+		if storageConfig.UseThanosObjstore {
 			objectClient, err = storage.NewObjectClientV2("bloom-store", periodicConfig.ObjectType, storageConfig)
 		} else {
 			objectClient, err = storage.NewObjectClient(periodicConfig.ObjectType, storageConfig, clientMetrics)

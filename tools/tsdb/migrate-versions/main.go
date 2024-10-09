@@ -101,7 +101,7 @@ func main() {
 func migrateTables(pCfg config.PeriodConfig, storageCfg storage.Config, clientMetrics storage.ClientMetrics, tableRange config.TableRange) error {
 	var objClient client.ObjectClient
 	var err error
-	if storageCfg.ThanosObjStore {
+	if storageCfg.UseThanosObjstore {
 		objClient, err = storage.NewObjectClientV2("tables-migration-tool", pCfg.ObjectType, storageCfg)
 	} else {
 		objClient, err = storage.NewObjectClient(pCfg.ObjectType, storageCfg, clientMetrics)

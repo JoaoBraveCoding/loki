@@ -54,7 +54,7 @@ func GetObjectClient(cfg Config) (client.ObjectClient, error) {
 	periodCfg := cfg.SchemaConfig.Configs[len(cfg.SchemaConfig.Configs)-1] // only check the last period.
 	var objClient client.ObjectClient
 	var err error
-	if cfg.StorageConfig.ThanosObjStore {
+	if cfg.StorageConfig.UseThanosObjstore {
 		objClient, err = storage.NewObjectClientV2("audit", periodCfg.ObjectType, cfg.StorageConfig)
 	} else {
 		objClient, err = storage.NewObjectClient(periodCfg.ObjectType, cfg.StorageConfig, storage.NewClientMetrics())

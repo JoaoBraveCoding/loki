@@ -566,12 +566,11 @@ func applyStorageConfig(cfg, defaults *ConfigWrapper) error {
 		}
 	}
 
-	if !reflect.DeepEqual(cfg.Common.Storage.ObjStoreConf, defaults.StorageConfig.ObjStoreConf) {
+	if !reflect.DeepEqual(cfg.Common.Storage.ObjectStore, defaults.StorageConfig.ObjectStore) {
 		configsFound++
 
 		applyConfig = func(r *ConfigWrapper) {
-			r.StorageConfig.ThanosObjStore = r.Common.Storage.ThanosObjStore
-			r.StorageConfig.ObjStoreConf = r.Common.Storage.ObjStoreConf
+			r.StorageConfig.ObjectStore = r.Common.Storage.ObjectStore
 			r.StorageConfig.Hedging = r.Common.Storage.Hedging
 		}
 	}
