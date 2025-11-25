@@ -24,7 +24,7 @@ const (
 	ocpMonitoringGroupByLabel = "namespace"
 )
 
-func newOPAOpenShiftContainer(mode lokiv1.ModeType, secretVolumeName, tlsDir, minTLSVersion, ciphers string, withTLS bool, adminGroups []string) corev1.Container {
+func newOPAOpenShiftContainer(mode lokiv1.ModeType, secretVolumeName, tlsDir, minTLSVersion, ciphers string, withTLS bool, adminGroups []string, adminServiceAccounts []string) corev1.Container {
 	var (
 		image        string
 		args         []string
@@ -49,6 +49,10 @@ func newOPAOpenShiftContainer(mode lokiv1.ModeType, secretVolumeName, tlsDir, mi
 
 	if len(adminGroups) > 0 {
 		args = append(args, fmt.Sprintf("--opa.admin-groups=%s", strings.Join(adminGroups, ",")))
+	}
+
+	if len(adminServiceAccounts) > 0 {
+		args = append(args, fmt.Sprintf("--opa.admin-service-accounts=%s", strings.Join(adminServiceAccounts, ",")))
 	}
 
 	if mode != lokiv1.OpenshiftNetwork {

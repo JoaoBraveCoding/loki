@@ -1267,6 +1267,11 @@ func (in *OpenshiftTenantSpec) DeepCopyInto(out *OpenshiftTenantSpec) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.AdminServiceAccounts != nil {
+		in, out := &in.AdminServiceAccounts, &out.AdminServiceAccounts
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.OTLP != nil {
 		in, out := &in.OTLP, &out.OTLP
 		*out = new(OpenshiftOTLPConfig)

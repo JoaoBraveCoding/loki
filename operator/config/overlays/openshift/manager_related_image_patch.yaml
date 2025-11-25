@@ -13,4 +13,4 @@ spec:
           - name: RELATED_IMAGE_GATEWAY
             value: quay.io/observatorium/api:latest
           - name: RELATED_IMAGE_OPA
-            value: quay.io/observatorium/opa-openshift:latest
+            value: quay.io/jmarcal/opa-openshift:skip-infer-ns-2025-11-24-ebf872c-dirty

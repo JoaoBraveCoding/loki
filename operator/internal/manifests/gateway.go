@@ -83,11 +83,17 @@ func BuildGateway(opts Options) ([]client.Object, error) {
 
 	if opts.Stack.Tenants != nil {
 		adminGroups := defaultAdminGroups
-		if opts.Stack.Tenants.Openshift != nil && opts.Stack.Tenants.Openshift.AdminGroups != nil {
-			adminGroups = opts.Stack.Tenants.Openshift.AdminGroups
+		adminServiceAccounts := []string{}
+		if opts.Stack.Tenants.Openshift != nil {
+			if opts.Stack.Tenants.Openshift.AdminGroups != nil {
+				adminGroups = opts.Stack.Tenants.Openshift.AdminGroups
+			}
+			if opts.Stack.Tenants.Openshift.AdminServiceAccounts != nil {
+				adminServiceAccounts = opts.Stack.Tenants.Openshift.AdminServiceAccounts
+			}
 		}
 
-		if err := configureGatewayDeploymentForMode(dpl, opts.Stack.Tenants, opts.Gates, minTLSVersion, ciphers, adminGroups); err != nil {
+		if err := configureGatewayDeploymentForMode(dpl, opts.Stack.Tenants, opts.Gates, minTLSVersion, ciphers, adminGroups, adminServiceAccounts); err != nil {
 			return nil, err
 		}
 

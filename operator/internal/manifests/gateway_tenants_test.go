@@ -1329,7 +1329,7 @@ func TestConfigureDeploymentForMode(t *testing.T) {
 	for _, tc := range tc {
 		t.Run(tc.desc, func(t *testing.T) {
 			t.Parallel()
-			err := configureGatewayDeploymentForMode(tc.dpl, tc.tenants, tc.featureGates, "min-version", "cipher1,cipher2", tc.adminGroups)
+			err := configureGatewayDeploymentForMode(tc.dpl, tc.tenants, tc.featureGates, "min-version", "cipher1,cipher2", tc.adminGroups, []string{})
 			require.NoError(t, err)
 			require.Equal(t, tc.want, tc.dpl)
 		})

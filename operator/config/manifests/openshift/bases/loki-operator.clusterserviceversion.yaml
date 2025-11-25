@@ -956,6 +956,8 @@ spec:
            - dedicated-admin
         displayName: Admin Groups
         path: tenants.openshift.adminGroups
+      - displayName: Admin Groups
+        path: tenants.openshift.adminServiceAccounts
       - description: OTLP contains settings for ingesting data using OTLP in the OpenShift
           tenancy mode.
         displayName: OpenTelemetry Protocol

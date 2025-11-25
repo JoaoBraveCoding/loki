@@ -3889,6 +3889,10 @@ spec:
                         items:
                           type: string
                         type: array
+                      adminServiceAccounts:
+                        items:
+                          type: string
+                        type: array
                       otlp:
                         description: OTLP contains settings for ingesting data using
                           OTLP in the OpenShift tenancy mode.

@@ -298,6 +298,11 @@ type OpenshiftTenantSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Admin Groups"
 	AdminGroups []string `json:"adminGroups"`
 
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Admin Groups"
+	AdminServiceAccounts []string `json:"adminServiceAccounts"`
+
 	// OTLP contains settings for ingesting data using OTLP in the OpenShift tenancy mode.
 	//
 	// +optional

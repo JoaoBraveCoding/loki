@@ -152,7 +152,7 @@ metadata:
     categories: OpenShift Optional, Logging & Tracing
     certified: "false"
     containerImage: quay.io/openshift-logging/loki-operator:0.1.0
-    createdAt: "2025-11-03T17:23:40Z"
+    createdAt: "2025-11-24T17:48:21Z"
     description: |
       The Loki Operator for OCP provides a means for configuring and managing a Loki stack for cluster logging.
       ## Prerequisites and Requirements
@@ -182,7 +182,7 @@ metadata:
     operatorframework.io/arch.arm64: supported
     operatorframework.io/arch.ppc64le: supported
     operatorframework.io/arch.s390x: supported
-  name: loki-operator.v0.1.0
+  name: loki-operator.v0.1.0-723ff2ded9-1
   namespace: placeholder
 spec:
   apiservicedefinitions: {}
@@ -1044,6 +1044,8 @@ spec:
            - dedicated-admin
         displayName: Admin Groups
         path: tenants.openshift.adminGroups
+      - displayName: Admin Groups
+        path: tenants.openshift.adminServiceAccounts
       - description: OTLP contains settings for ingesting data using OTLP in the OpenShift
           tenancy mode.
         displayName: OpenTelemetry Protocol
@@ -1892,8 +1894,8 @@ spec:
                 - name: RELATED_IMAGE_GATEWAY
                   value: quay.io/observatorium/api:latest
                 - name: RELATED_IMAGE_OPA
-                  value: quay.io/observatorium/opa-openshift:latest
-                image: quay.io/openshift-logging/loki-operator:0.1.0
+                  value: quay.io/jmarcal/opa-openshift:skip-infer-ns-2025-11-24-ebf872c-dirty
+                image: quay.io/jmarcal/loki-operator:0.1.0-723ff2ded9-1
                 imagePullPolicy: IfNotPresent
                 livenessProbe:
                   httpGet:
@@ -2016,9 +2018,9 @@ spec:
     name: loki
   - image: quay.io/observatorium/api:latest
     name: gateway
-  - image: quay.io/observatorium/opa-openshift:latest
+  - image: quay.io/jmarcal/opa-openshift:skip-infer-ns-2025-11-24-ebf872c-dirty
     name: opa
-  version: 0.1.0
+  version: 0.1.0-723ff2ded9-1
   webhookdefinitions:
   - admissionReviewVersions:
     - v1
