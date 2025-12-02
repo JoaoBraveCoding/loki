@@ -28,6 +28,7 @@ import (
 	configv1 "github.com/grafana/loki/operator/api/config/v1"
 	lokiv1 "github.com/grafana/loki/operator/api/loki/v1"
 	"github.com/grafana/loki/operator/internal/external/k8s/k8sfakes"
+	"github.com/grafana/loki/operator/internal/manifests"
 	"github.com/grafana/loki/operator/internal/status"
 )
 
@@ -739,4 +740,141 @@ func TestCreateOrUpdateLokiStack_WhenInvalidQueryTimeout_SetDegraded(t *testing.
 	// make sure error is returned
 	require.Error(t, err)
 	require.Equal(t, degradedErr, err)
+}
+
+func TestBuildIngester_PodDisruptionBudgetWithCustomReplicationFactor(t *testing.T) {
+	for _, tc := range []struct {
+		Name                    string
+		Size                    lokiv1.LokiStackSizeType
+		IngesterReplicas        int32
+		ReplicationFactor       int32
+		ExpectedPDBMinAvailable int
+		ExpectedErr             error
+	}{
+		{
+			Name:                    "Demo default",
+			Size:                    lokiv1.SizeOneXDemo,
+			ExpectedPDBMinAvailable: 1,
+		},
+		{
+			Name:                    "Pico default",
+			Size:                    lokiv1.SizeOneXPico,
+			ExpectedPDBMinAvailable: 2,
+		},
+		{
+			Name:                    "ExtraSmall default",
+			Size:                    lokiv1.SizeOneXExtraSmall,
+			ExpectedPDBMinAvailable: 1,
+		},
+		{
+			Name:                    "Small default",
+			Size:                    lokiv1.SizeOneXSmall,
+			ExpectedPDBMinAvailable: 1,
+		},
+		{
+			Name:                    "Medium default",
+			Size:                    lokiv1.SizeOneXMedium,
+			ExpectedPDBMinAvailable: 2,
+		},
+		{
+			Name:              "Pico with invalid replication factor",
+			Size:              lokiv1.SizeOneXPico,
+			ReplicationFactor: 3,
+			ExpectedErr: &status.DegradedError{
+				Message: "Invalid configuration: ingester replicas (3) should be more than the replication factor (3)",
+				Reason:  lokiv1.ReasonInvalidReplicationFactor,
+				Requeue: true,
+			},
+		},
+		{
+			Name:             "Pico with invalid ingester replicas",
+			Size:             lokiv1.SizeOneXPico,
+			IngesterReplicas: 2,
+			ExpectedErr: &status.DegradedError{
+				Message: "Invalid configuration: ingester replicas (2) should be more than the replication factor (2)",
+				Reason:  lokiv1.ReasonInvalidReplicationFactor,
+				Requeue: true,
+			},
+		},
+		{
+			// (btaani/JoaoBraveCoding) This test case should be deleted once we re-evaluate the
+			// configuration of the sizes
+			Name:                    "ExtraSmall with replication factor that should be invalid",
+			Size:                    lokiv1.SizeOneXExtraSmall,
+			IngesterReplicas:        2,
+			ExpectedPDBMinAvailable: 1,
+		},
+		{
+			// (btaani/JoaoBraveCoding) This test case should be deleted once we re-evaluate the
+			// configuration of the sizes
+			Name:                    "Small with replication factor that should be invalid",
+			Size:                    lokiv1.SizeOneXSmall,
+			IngesterReplicas:        2,
+			ExpectedPDBMinAvailable: 1,
+		},
+		{
+			Name:              "ExtraSmall with invalid IR RF",
+			Size:              lokiv1.SizeOneXExtraSmall,
+			IngesterReplicas:  3,
+			ReplicationFactor: 3,
+			ExpectedErr: &status.DegradedError{
+				Message: "Invalid configuration: ingester replicas (3) should be more than the replication factor (3)",
+				Reason:  lokiv1.ReasonInvalidReplicationFactor,
+				Requeue: true,
+			},
+		},
+		{
+			Name:                    "ExtraSmall with valid IR",
+			Size:                    lokiv1.SizeOneXExtraSmall,
+			IngesterReplicas:        3,
+			ExpectedPDBMinAvailable: 2,
+		},
+		{
+			Name:                    "Medium with custom IR and RF",
+			Size:                    lokiv1.SizeOneXMedium,
+			IngesterReplicas:        4,
+			ReplicationFactor:       3,
+			ExpectedPDBMinAvailable: 3,
+		},
+		{
+			Name:                    "Medium with custom IR",
+			Size:                    lokiv1.SizeOneXMedium,
+			IngesterReplicas:        4,
+			ExpectedPDBMinAvailable: 2,
+		},
+	} {
+		t.Run(tc.Name, func(t *testing.T) {
+			opts := manifests.Options{
+				Stack: lokiv1.LokiStackSpec{
+					Size: tc.Size,
+				},
+			}
+
+			if tc.IngesterReplicas > 0 {
+				opts.Stack.Template = &lokiv1.LokiTemplateSpec{
+					Ingester: &lokiv1.LokiComponentSpec{
+						Replicas: tc.IngesterReplicas,
+					},
+				}
+			}
+			if tc.ReplicationFactor > 0 {
+				opts.Stack.Replication = &lokiv1.ReplicationSpec{
+					Factor: tc.ReplicationFactor,
+				}
+			}
+
+			if err := manifests.ApplyDefaultSettings(&opts); err != nil {
+				t.Fatalf("failed to apply default settings: %v", err)
+			}
+
+			err := setPDBMinAvailable(&opts)
+			if tc.ExpectedErr != nil {
+				require.Error(t, err)
+				require.Equal(t, tc.ExpectedErr, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.ExpectedPDBMinAvailable, opts.ResourceRequirements.Ingester.PDBMinAvailable)
+		})
+	}
 }

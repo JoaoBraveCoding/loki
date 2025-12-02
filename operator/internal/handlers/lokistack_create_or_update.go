@@ -148,12 +148,9 @@ func CreateOrUpdateLokiStack(
 		return nil, optErr
 	}
 
-	if err = manifests.ValidateReplicationFactor(&opts); err != nil {
-		return nil, &status.DegradedError{
-			Message: fmt.Sprintf("Invalid configuration: ingester replicas (%d) should be more than the replication factor (%d)", opts.Stack.Template.Ingester.Replicas, opts.Stack.Replication.Factor),
-			Reason:  lokiv1.ReasonInvalidReplicationFactor,
-			Requeue: true,
-		}
+	if optErr := setPDBMinAvailable(&opts); optErr != nil {
+		ll.Error(optErr, "failed to set PDB min available")
+		return nil, optErr
 	}
 
 	objects, err := manifests.BuildAll(opts)
@@ -257,4 +254,39 @@ func isNamespacedResource(obj client.Object) bool {
 	default:
 		return true
 	}
+}
+
+func setPDBMinAvailable(opts *manifests.Options) error {
+	validateIRRFRation := func() error {
+		if opts.Stack.Size != lokiv1.SizeOneXDemo {
+			if opts.Stack.Template.Ingester.Replicas <= opts.Stack.Replication.Factor {
+				return &status.DegradedError{
+					Message: fmt.Sprintf("Invalid configuration: ingester replicas (%d) should be more than the replication factor (%d)", opts.Stack.Template.Ingester.Replicas, opts.Stack.Replication.Factor),
+					Reason:  lokiv1.ReasonInvalidReplicationFactor,
+					Requeue: true,
+				}
+			}
+		}
+		return nil
+	}
+
+	switch opts.Stack.Size {
+	case lokiv1.SizeOneXExtraSmall, lokiv1.SizeOneXSmall:
+		if opts.Stack.Template.Ingester.Replicas != 2 || opts.Stack.Replication.Factor != 2 {
+			if err := validateIRRFRation(); err != nil {
+				return err
+			}
+		}
+	default:
+		if err := validateIRRFRation(); err != nil {
+			return err
+		}
+	}
+
+	pdbMinAvailable := 1
+	if opts.Stack.Template.Ingester.Replicas > opts.Stack.Replication.Factor {
+		pdbMinAvailable = int(opts.Stack.Replication.Factor)
+	}
+	opts.ResourceRequirements.Ingester.PDBMinAvailable = pdbMinAvailable
+	return nil
 }
