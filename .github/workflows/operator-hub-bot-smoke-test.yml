@@ -1,0 +1,45 @@
+name: operator-hub-bot-smoke-test
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/operator-reusable-hub-release.yml"
+      - ".github/workflows/operator-hub-bot-smoke-test.yml"
+
+jobs:
+  validate-grafanabot-token-scope:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: "read"
+      id-token: "write"
+    strategy:
+      fail-fast: false
+      matrix:
+        repo:
+          - community-operators
+          - community-operators-prod
+    steps:
+      - name: Retrieve GitHub App credentials from Vault
+        id: get-secrets
+        uses: grafana/shared-workflows/actions/get-vault-secrets@28361cdb22223e5f1e34358c86c20908e7248760
+        with:
+          repo_secrets: |
+            APP_ID=loki-gh-app:app-id
+            PRIVATE_KEY=loki-gh-app:private-key
+
+      - name: Generate GitHub App token for grafanabot fork
+        id: app-token
+        uses: actions/create-github-app-token@a8d616148505b5069dccd32f177bb87d7f39123b # v2.1.1
+        with:
+          app-id: ${{ env.APP_ID }}
+          private-key: ${{ env.PRIVATE_KEY }}
+          owner: grafanabot
+          repositories: ${{ matrix.repo }}
+
+      - name: Validate app installation metadata
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          gh api /installation/repositories --jq '.total_count'
+          gh api /repos/grafanabot/${{ matrix.repo }} --jq '.full_name'
+
