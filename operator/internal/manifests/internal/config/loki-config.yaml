@@ -6,6 +6,15 @@ chunk_store_config:
     embedded_cache:
       enabled: true
       max_size_mb: 500
+kafka_config:
+  topic: "loki"
+  reader_config:
+    address: kafka-broker.openshift-logging.svc.cluster.local:9092
+  writer_config:
+    address: kafka-broker.openshift-logging.svc.cluster.local:9092
+  auto_create_topic_enabled: true
+  consumer_group_offset_commit_interval: 1s
+  max_consumer_lag_at_startup: 15s
 common:
   storage:
     object_store:
@@ -106,8 +115,10 @@ compactor:
 {{- end }}
   delete_request_store: {{.ObjectStorage.SharedStore}}
 {{- end }}
-{{- if .OTLPAttributes.RemoveDefaultLabels }}
 distributor:
+  kafka_writes_enabled: true
+  ingester_writes_enabled: false
+{{- if .OTLPAttributes.RemoveDefaultLabels }}
   otlp_config:
     default_resource_attributes_as_index_labels: []
 {{- end }}
@@ -139,6 +150,11 @@ frontend_worker:
     tls_min_version: {{ .TLS.MinTLSVersion }}
 {{- end }}
 ingester:
+  kafka_ingestion:
+    enabled: true
+    partition_ring:
+      kvstore:
+        store: memberlist
   chunk_block_size: 262144
   chunk_encoding: snappy
   chunk_idle_period: 1h
@@ -299,6 +315,7 @@ memberlist:
   min_join_backoff: 1s
 {{- end }}
 querier:
+  query_partition_ingesters: true
   engine:
     max_look_back_period: 30s
   extra_query_delay: 0s
