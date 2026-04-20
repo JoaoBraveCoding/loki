@@ -8,7 +8,7 @@ env:
   DRY_RUN: false
   GITHUB_APP: "loki-gh-app"
   IMAGE_PREFIX: "grafana"
-  RELEASE_LIB_REF: "fb3b12ec3e6411bcb951a5ea08cc983c2f2735fc"
+  RELEASE_LIB_REF: "27ed4db1e9382bd115b2c57370fa459b48087d56"
   RELEASE_REPO: "grafana/loki"
   SKIP_VALIDATION: false
   USE_GITHUB_APP_TOKEN: true
@@ -19,11 +19,11 @@ jobs:
       contents: "write"
       id-token: "write"
       pull-requests: "write"
-    uses: "grafana/loki-release/.github/workflows/check.yml@fb3b12ec3e6411bcb951a5ea08cc983c2f2735fc"
+    uses: "grafana/loki-release/.github/workflows/check.yml@27ed4db1e9382bd115b2c57370fa459b48087d56"
     with:
       build_image: "grafana/loki-build-image:0.35.1"
       golang_ci_lint_version: "v2.10.1"
-      release_lib_ref: "fb3b12ec3e6411bcb951a5ea08cc983c2f2735fc"
+      release_lib_ref: "27ed4db1e9382bd115b2c57370fa459b48087d56"
       skip_validation: false
       use_github_app_token: true
   create-release-pr:
@@ -186,6 +186,29 @@ jobs:
             /src/loki/.github/vendor/github.com/grafana/loki-release/workflows/install_workflow_dependencies.sh dist
           fi
           make dist packages
+        EOF
+      working-directory: "release"
+    - continue-on-error: true
+      env:
+        BUILD_IN_CONTAINER: false
+        DRONE_TAG: "${{ needs.version.outputs.version }}"
+        IMAGE_TAG: "${{ needs.version.outputs.version }}"
+      if: "${{ fromJSON(needs.version.outputs.pr_created) }}"
+      name: "build optional artifacts"
+      run: |
+        cat <<EOF | docker run \
+          --interactive \
+          --env BUILD_IN_CONTAINER \
+          --env DRONE_TAG \
+          --env IMAGE_TAG \
+          --volume .:/src/loki \
+          --workdir /src/loki \
+          --entrypoint /bin/sh "grafana/loki-build-image:0.35.1"
+          git config --global --add safe.directory /src/loki
+          if echo "grafana/loki-build-image:0.35.1" | grep -q "golang"; then
+            /src/loki/.github/vendor/github.com/grafana/loki-release/workflows/install_workflow_dependencies.sh dist
+          fi
+          make dist/loki-linux-riscv64
         EOF
       working-directory: "release"
     - if: "${{ fromJSON(needs.version.outputs.pr_created) }}"
