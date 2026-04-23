@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +35,8 @@ import (
 	"github.com/thanos-io/objstore"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+
+	"github.com/grafana/loki/v3/pkg/dataobj/metastore"
 
 	"github.com/grafana/loki/v3/pkg/analytics"
 	"github.com/grafana/loki/v3/pkg/bloombuild/builder"
@@ -82,7 +83,6 @@ import (
 	"github.com/grafana/loki/v3/pkg/storage/chunk/client"
 	chunk_util "github.com/grafana/loki/v3/pkg/storage/chunk/client/util"
 	"github.com/grafana/loki/v3/pkg/storage/config"
-	"github.com/grafana/loki/v3/pkg/storage/stores/series/index"
 	"github.com/grafana/loki/v3/pkg/storage/stores/shipper/bloomshipper"
 	"github.com/grafana/loki/v3/pkg/storage/stores/shipper/indexshipper"
 	"github.com/grafana/loki/v3/pkg/storage/stores/shipper/indexshipper/boltdb"
@@ -100,8 +100,6 @@ import (
 	serverutil "github.com/grafana/loki/v3/pkg/util/server"
 	"github.com/grafana/loki/v3/pkg/validation"
 )
-
-const maxChunkAgeForTableManager = 12 * time.Hour
 
 // The various modules that make up Loki.
 const (
@@ -130,7 +128,6 @@ const (
 	QueryEngineScheduler         = "query-engine-scheduler"
 	QueryEngineWorker            = "query-engine-worker"
 	Store                        = "store"
-	TableManager                 = "table-manager"
 	RulerStorage                 = "ruler-storage"
 	Ruler                        = "ruler"
 	RuleEvaluator                = "rule-evaluator"
@@ -417,8 +414,8 @@ func (t *Loki) initDistributor() (services.Service, error) {
 		t.InternalServer.HTTP.Path("/distributor/ring").Methods("GET", "POST").Handler(t.distributor)
 	}
 
-	t.Server.HTTP.Path("/api/prom/push").Methods("POST").Handler(lokiPushHandler)
-	t.Server.HTTP.Path("/loki/api/v1/push").Methods("POST").Handler(lokiPushHandler)
+	t.Server.HTTP.Path(constants.PathPromPush).Methods("POST").Handler(lokiPushHandler)
+	t.Server.HTTP.Path(constants.PathLokiPush).Methods("POST").Handler(lokiPushHandler)
 	t.Server.HTTP.Path("/otlp/v1/logs").Methods("POST").Handler(otlpPushHandler)
 	return t.distributor, nil
 }
@@ -535,12 +532,6 @@ func (t *Loki) initIngestLimitsFrontend() (services.Service, error) {
 	return ingestLimitsFrontend, nil
 }
 
-// initCodec sets the codec used to encode and decode requests.
-func (t *Loki) initCodec() (services.Service, error) {
-	t.Codec = queryrange.DefaultCodec
-	return nil, nil
-}
-
 func (t *Loki) initQuerier() (services.Service, error) {
 	logger := log.With(util_log.Logger, "component", "querier")
 	if t.Cfg.Ingester.QueryStoreMaxLookBackPeriod != 0 {
@@ -588,22 +579,27 @@ func (t *Loki) initQuerier() (services.Service, error) {
 	toMerge := []middleware.Interface{
 		httpreq.ExtractQueryMetricsMiddleware(),
 		httpreq.ExtractQueryTagsMiddleware(),
-		httpreq.PropagateHeadersMiddleware(httpreq.LokiEncodingFlagsHeader, httpreq.LokiDisablePipelineWrappersHeader),
+		// Propagate all headers but the authorization header to avoid security issues.
+		httpreq.PropagateAllHeadersMiddleware(httpreq.AuthorizationHeader),
 		serverutil.RecoveryHTTPMiddleware,
 		t.HTTPAuthMiddleware,
 		serverutil.NewPrepopulateMiddleware(),
 		serverutil.ResponseJSONMiddleware(),
 	}
 
-	var store objstore.Bucket
-	if t.Cfg.Querier.EngineV2.Enable {
+	var (
+		store objstore.Bucket
+		ms    metastore.Metastore
+	)
+	if t.Cfg.QueryEngine.Enable {
 		store, err = t.getDataObjBucket("dataobj-querier")
 		if err != nil {
 			return nil, err
 		}
+		ms = metastore.NewObjectMetastore(store, t.Cfg.DataObj.Metastore, logger, t.metastoreMetrics)
 	}
 
-	t.querierAPI = querier.NewQuerierAPI(t.Cfg.Querier, t.Cfg.DataObj.Metastore, t.Querier, t.Overrides, store, prometheus.DefaultRegisterer, logger)
+	t.querierAPI = querier.NewQuerierAPI(t.Cfg.Querier, t.Cfg.QueryEngine, ms, t.Querier, t.Overrides, store, prometheus.DefaultRegisterer, logger)
 
 	indexStatsHTTPMiddleware := querier.WrapQuerySpanAndTimeout("query.IndexStats", t.Overrides)
 	indexShardsHTTPMiddleware := querier.WrapQuerySpanAndTimeout("query.IndexShards", t.Overrides)
@@ -669,41 +665,41 @@ func (t *Loki) initQuerier() (services.Service, error) {
 			router = router.PathPrefix(t.Cfg.Server.PathPrefix).Subrouter()
 		}
 
-		router.Path("/loki/api/v1/query_range").Methods("GET", "POST").Handler(
+		router.Path(constants.PathLokiQueryRange).Methods("GET", "POST").Handler(
 			middleware.Merge(
 				httpMiddleware,
 				querier.WrapQuerySpanAndTimeout("query.RangeQuery", t.Overrides),
 			).Wrap(httpHandler),
 		)
 
-		router.Path("/loki/api/v1/query").Methods("GET", "POST").Handler(
+		router.Path(constants.PathLokiQuery).Methods("GET", "POST").Handler(
 			middleware.Merge(
 				httpMiddleware,
 				querier.WrapQuerySpanAndTimeout("query.InstantQuery", t.Overrides),
 			).Wrap(httpHandler),
 		)
 
-		router.Path("/loki/api/v1/label").Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/labels").Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/label/{name}/values").Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiLabel).Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiLabels).Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiLabelNameValues).Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
 
-		router.Path("/loki/api/v1/series").Methods("GET", "POST").Handler(seriesHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/index/stats").Methods("GET", "POST").Handler(indexStatsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/index/shards").Methods("GET", "POST").Handler(indexShardsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/index/volume").Methods("GET", "POST").Handler(volumeHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/index/volume_range").Methods("GET", "POST").Handler(volumeRangeHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/loki/api/v1/patterns").Methods("GET", "POST").Handler(httpHandler)
+		router.Path(constants.PathLokiSeries).Methods("GET", "POST").Handler(seriesHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiIndexStats).Methods("GET", "POST").Handler(indexStatsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiIndexShards).Methods("GET", "POST").Handler(indexShardsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiIndexVolume).Methods("GET", "POST").Handler(volumeHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiIndexVolumeRange).Methods("GET", "POST").Handler(volumeRangeHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathLokiPatterns).Methods("GET", "POST").Handler(httpHandler)
 
-		router.Path("/api/prom/query").Methods("GET", "POST").Handler(
+		router.Path(constants.PathPromQuery).Methods("GET", "POST").Handler(
 			middleware.Merge(
 				httpMiddleware,
 				querier.WrapQuerySpanAndTimeout("query.LogQuery", t.Overrides),
 			).Wrap(httpHandler),
 		)
 
-		router.Path("/api/prom/label").Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/api/prom/label/{name}/values").Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
-		router.Path("/api/prom/series").Methods("GET", "POST").Handler(seriesHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathPromLabel).Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathPromLabelNameValues).Methods("GET", "POST").Handler(labelsHTTPMiddleware.Wrap(httpHandler))
+		router.Path(constants.PathPromSeries).Methods("GET", "POST").Handler(seriesHTTPMiddleware.Wrap(httpHandler))
 	}
 
 	// We always want to register tail routes externally, tail requests are different from normal queries, they
@@ -716,8 +712,8 @@ func (t *Loki) initQuerier() (services.Service, error) {
 	// we disable the proxying of the tail routes in initQueryFrontend() and we still want these routes regiestered
 	// on the external router.
 	tailQuerier := tail.NewQuerier(t.ingesterQuerier, t.Querier, deleteStore, t.Overrides, t.Cfg.Querier.TailMaxDuration, tail.NewMetrics(prometheus.DefaultRegisterer), log.With(util_log.Logger, "component", "tail-querier"))
-	t.Server.HTTP.Path("/loki/api/v1/tail").Methods("GET", "POST").Handler(httpMiddleware.Wrap(http.HandlerFunc(tailQuerier.TailHandler)))
-	t.Server.HTTP.Path("/api/prom/tail").Methods("GET", "POST").Handler(httpMiddleware.Wrap(http.HandlerFunc(tailQuerier.TailHandler)))
+	t.Server.HTTP.Path(constants.PathLokiTail).Methods("GET", "POST").Handler(httpMiddleware.Wrap(http.HandlerFunc(tailQuerier.TailHandler)))
+	t.Server.HTTP.Path(constants.PathPromTail).Methods("GET", "POST").Handler(httpMiddleware.Wrap(http.HandlerFunc(tailQuerier.TailHandler)))
 
 	internalMiddlewares := []queryrangebase.Middleware{
 		serverutil.RecoveryMiddleware,
@@ -865,47 +861,6 @@ func (t *Loki) initPatternIngesterTee() (services.Service, error) {
 			return nil
 		},
 	), nil
-}
-
-func (t *Loki) initTableManager() (services.Service, error) {
-	level.Warn(util_log.Logger).Log("msg", "table manager is deprecated. Consider migrating to tsdb index which relies on a compactor instead.")
-
-	err := t.Cfg.SchemaConfig.Load()
-	if err != nil {
-		return nil, err
-	}
-
-	// Assume the newest config is the one to use
-	lastConfig := &t.Cfg.SchemaConfig.Configs[len(t.Cfg.SchemaConfig.Configs)-1]
-
-	if (t.Cfg.TableManager.ChunkTables.WriteScale.Enabled ||
-		t.Cfg.TableManager.IndexTables.WriteScale.Enabled ||
-		t.Cfg.TableManager.ChunkTables.InactiveWriteScale.Enabled ||
-		t.Cfg.TableManager.IndexTables.InactiveWriteScale.Enabled ||
-		t.Cfg.TableManager.ChunkTables.ReadScale.Enabled ||
-		t.Cfg.TableManager.IndexTables.ReadScale.Enabled ||
-		t.Cfg.TableManager.ChunkTables.InactiveReadScale.Enabled ||
-		t.Cfg.TableManager.IndexTables.InactiveReadScale.Enabled) &&
-		t.Cfg.StorageConfig.AWSStorageConfig.Metrics.URL == "" {
-		level.Error(util_log.Logger).Log("msg", "WriteScale is enabled but no Metrics URL has been provided")
-		os.Exit(1)
-	}
-
-	reg := prometheus.WrapRegistererWith(prometheus.Labels{"component": "table-manager-store"}, prometheus.DefaultRegisterer)
-	tableClient, err := storage.NewTableClient(lastConfig.IndexType, "table-manager", *lastConfig, t.Cfg.StorageConfig, t.ClientMetrics, reg, util_log.Logger)
-	if err != nil {
-		return nil, err
-	}
-
-	bucketClient, err := storage.NewBucketClient(t.Cfg.StorageConfig)
-	util_log.CheckFatal("initializing bucket client", err, util_log.Logger)
-
-	t.tableManager, err = index.NewTableManager(t.Cfg.TableManager, t.Cfg.SchemaConfig, maxChunkAgeForTableManager, tableClient, bucketClient, nil, prometheus.DefaultRegisterer, util_log.Logger)
-	if err != nil {
-		return nil, err
-	}
-
-	return t.tableManager, nil
 }
 
 func (t *Loki) initStore() (services.Service, error) {
@@ -1162,27 +1117,28 @@ func (i ingesterQueryOptions) QueryIngestersWithin() time.Duration {
 func (t *Loki) initQueryFrontendMiddleware() (_ services.Service, err error) {
 	level.Debug(util_log.Logger).Log("msg", "initializing query frontend tripperware")
 
-	var v2Router queryrange.RouterConfig
+	v2Router := queryrange.RouterConfig{
+		Enabled: t.Cfg.QueryEngine.EnableEngineRouter,
+	}
 
-	if t.Cfg.QueryRange.EnableV2EngineRouter {
-		start, end := t.Cfg.Querier.EngineV2.Executor.ValidQueryRange()
+	if t.Cfg.QueryEngine.EnableEngineRouter {
+		start, end := t.Cfg.QueryEngine.ValidQueryRange()
 
 		level.Debug(util_log.Logger).Log(
 			"msg", "initializing v2 engine router",
 			"start_time", start,
 			"end_time", end,
-			"destination", t.Cfg.QueryRange.V2EngineAddress,
+			"destination", t.Cfg.QueryEngine.DownstreamAddress,
 		)
 
-		handler, err := frontend.NewDownstreamRoundTripper(t.Cfg.QueryRange.V2EngineAddress, http.DefaultTransport, queryrange.DefaultCodec)
+		handler, err := frontend.NewDownstreamRoundTripper(t.Cfg.QueryEngine.DownstreamAddress, http.DefaultTransport, queryrange.DefaultCodec)
 		if err != nil {
 			return nil, fmt.Errorf("creating downstream round tripper for v2 engine: %w", err)
 		}
 
 		v2Router = queryrange.RouterConfig{
-			Start: start,
-			Lag:   t.Cfg.Querier.DataobjStorageLag,
-
+			Enabled:  true,
+			V2Range:  t.Cfg.QueryEngine.ValidQueryRange,
 			Validate: engine_v2.IsQuerySupported,
 			Handler:  handler,
 		}
@@ -1307,7 +1263,8 @@ func (t *Loki) initQueryFrontend() (_ services.Service, err error) {
 	// TODO: add SerializeHTTPHandler
 	toMerge := []middleware.Interface{
 		httpreq.ExtractQueryTagsMiddleware(),
-		httpreq.PropagateHeadersMiddleware(httpreq.LokiActorPathHeader, httpreq.LokiEncodingFlagsHeader, httpreq.LokiDisablePipelineWrappersHeader),
+		// Propagate all headers but the authorization header to avoid security issues.
+		httpreq.PropagateAllHeadersMiddleware(httpreq.AuthorizationHeader),
 		serverutil.RecoveryHTTPMiddleware,
 		t.HTTPAuthMiddleware,
 		queryrange.StatsHTTPMiddleware,
@@ -1334,52 +1291,50 @@ func (t *Loki) initQueryFrontend() (_ services.Service, err error) {
 		if err != nil {
 			return nil, err
 		}
-		tp := httputil.NewSingleHostReverseProxy(tailURL)
-
 		cfg, err := t.Cfg.Frontend.TLS.GetTLSConfig()
 		if err != nil {
 			return nil, err
 		}
 
-		tp.Transport = &http.Transport{
-			TLSClientConfig: cfg,
-		}
-
-		director := tp.Director
-		tp.Director = func(req *http.Request) {
-			director(req)
-			req.Host = tailURL.Host
+		tp := &httputil.ReverseProxy{
+			Rewrite: func(pr *httputil.ProxyRequest) {
+				pr.SetURL(tailURL)
+				pr.Out.Host = tailURL.Host
+			},
+			Transport: &http.Transport{
+				TLSClientConfig: cfg,
+			},
 		}
 
 		defaultHandler = httpMiddleware.Wrap(tp)
 	} else {
 		defaultHandler = frontendHandler
 	}
-	t.Server.HTTP.Path("/loki/api/v1/query_range").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/query").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/label").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/labels").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/label/{name}/values").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/series").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/patterns").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/detected_labels").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/detected_fields").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/detected_field/{name}/values").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/index/stats").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/index/shards").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/index/volume").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/loki/api/v1/index/volume_range").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/api/prom/query").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/api/prom/label").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/api/prom/label/{name}/values").Methods("GET", "POST").Handler(frontendHandler)
-	t.Server.HTTP.Path("/api/prom/series").Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiQueryRange).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiQuery).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiLabel).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiLabels).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiLabelNameValues).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiSeries).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiPatterns).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiDetectedLabels).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiDetectedFields).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiDetectedFieldNameValues).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiIndexStats).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiIndexShards).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiIndexVolume).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathLokiIndexVolumeRange).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathPromQuery).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathPromLabel).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathPromLabelNameValues).Methods("GET", "POST").Handler(frontendHandler)
+	t.Server.HTTP.Path(constants.PathPromSeries).Methods("GET", "POST").Handler(frontendHandler)
 
 	// Only register tailing requests if this process does not act as a Querier
 	// If this process is also a Querier the Querier will register the tail endpoints.
 	if !t.isModuleActive(Querier) {
 		// defer tail endpoints to the default handler
-		t.Server.HTTP.Path("/loki/api/v1/tail").Methods("GET", "POST").Handler(defaultHandler)
-		t.Server.HTTP.Path("/api/prom/tail").Methods("GET", "POST").Handler(defaultHandler)
+		t.Server.HTTP.Path(constants.PathLokiTail).Methods("GET", "POST").Handler(defaultHandler)
+		t.Server.HTTP.Path(constants.PathPromTail).Methods("GET", "POST").Handler(defaultHandler)
 	}
 
 	if t.frontend == nil {
@@ -1409,7 +1364,7 @@ func (t *Loki) initQueryFrontend() (_ services.Service, err error) {
 }
 
 func (t *Loki) initV2QueryEngine() (services.Service, error) {
-	if !t.Cfg.Querier.EngineV2.Enable {
+	if !t.Cfg.QueryEngine.Enable {
 		return nil, nil
 	}
 
@@ -1419,28 +1374,42 @@ func (t *Loki) initV2QueryEngine() (services.Service, error) {
 	}
 
 	logger := log.With(util_log.Logger, "component", "query-engine")
-	engine, err := engine_v2.New(engine_v2.Params{
+	ms := metastore.NewObjectMetastore(store, t.Cfg.DataObj.Metastore, logger, t.metastoreMetrics)
+
+	params := engine_v2.Params{
 		Logger:     logger,
 		Registerer: prometheus.DefaultRegisterer,
 
-		Config:          t.Cfg.Querier.EngineV2.Executor,
-		MetastoreConfig: t.Cfg.DataObj.Metastore,
+		Config: t.Cfg.QueryEngine,
 
 		Scheduler: t.queryEngineV2Scheduler,
-		Bucket:    store,
 		Limits:    t.Overrides,
-	})
+
+		Metastore: ms,
+	}
+
+	if t.Cfg.QueryEngine.EnableDeleteReqFiltering {
+		client, err := t.deleteRequestsClient("query-engine", t.Overrides)
+		if err != nil {
+			return nil, err
+		}
+
+		params.DeleteGetter = client
+	}
+
+	engine, err := engine_v2.New(params)
 	if err != nil {
 		return nil, err
 	}
 
 	// TODO(rfratto): Validate that no other module which responds to these
 	// paths is enabled.
-	if t.Cfg.Querier.EngineV2.Distributed {
+	if t.Cfg.QueryEngine.Distributed {
 		toMerge := []middleware.Interface{
 			httpreq.ExtractQueryMetricsMiddleware(),
 			httpreq.ExtractQueryTagsMiddleware(),
-			httpreq.PropagateHeadersMiddleware(httpreq.LokiEncodingFlagsHeader, httpreq.LokiDisablePipelineWrappersHeader),
+			// Propagate all headers but the authorization header to avoid security issues.
+			httpreq.PropagateAllHeadersMiddleware(httpreq.AuthorizationHeader),
 			serverutil.RecoveryHTTPMiddleware,
 			t.HTTPAuthMiddleware,
 			serverutil.NewPrepopulateMiddleware(),
@@ -1448,10 +1417,15 @@ func (t *Loki) initV2QueryEngine() (services.Service, error) {
 		}
 
 		httpMiddleware := middleware.Merge(toMerge...)
-		handler := httpMiddleware.Wrap(engine_v2.Handler(t.Cfg.Querier.EngineV2.Executor, logger, engine, t.Overrides))
 
-		t.Server.HTTP.Path("/loki/api/v1/query_range").Methods("GET", "POST").Handler(handler)
-		t.Server.HTTP.Path("/loki/api/v1/query").Methods("GET", "POST").Handler(handler)
+		engineHandler, err := engine_v2.Handler(t.Cfg.QueryEngine, logger, engine, t.Overrides, prometheus.DefaultRegisterer)
+		if err != nil {
+			return nil, fmt.Errorf("creating engine handler: %w", err)
+		}
+		handler := httpMiddleware.Wrap(engineHandler)
+
+		t.Server.HTTP.Path(constants.PathLokiQueryRange).Methods("GET", "POST").Handler(handler)
+		t.Server.HTTP.Path(constants.PathLokiQuery).Methods("GET", "POST").Handler(handler)
 	}
 
 	t.queryEngineV2 = engine
@@ -1459,14 +1433,14 @@ func (t *Loki) initV2QueryEngine() (services.Service, error) {
 }
 
 func (t *Loki) initV2QueryEngineScheduler() (services.Service, error) {
-	if !t.Cfg.Querier.EngineV2.Enable {
+	if !t.Cfg.QueryEngine.Enable {
 		return nil, nil
 	}
 
 	// Determine the advertise address. Results in nil if not running
 	// distributed execution.
 	listenPort := uint16(t.Cfg.Server.HTTPListenPort)
-	advertiseAddr, err := t.Cfg.Querier.EngineV2.AdvertiseAddr(listenPort)
+	advertiseAddr, err := t.Cfg.QueryEngine.AdvertiseAddr(listenPort)
 	if err != nil {
 		return nil, err
 	}
@@ -1491,7 +1465,7 @@ func (t *Loki) initV2QueryEngineScheduler() (services.Service, error) {
 	))
 
 	// Only register HTTP handler when running distributed query execution
-	if t.Cfg.Querier.EngineV2.Distributed {
+	if t.Cfg.QueryEngine.Distributed {
 		sched.RegisterSchedulerServer(t.Server.HTTP)
 	}
 
@@ -1500,14 +1474,14 @@ func (t *Loki) initV2QueryEngineScheduler() (services.Service, error) {
 }
 
 func (t *Loki) initV2QueryEngineWorker() (services.Service, error) {
-	if !t.Cfg.Querier.EngineV2.Enable {
+	if !t.Cfg.QueryEngine.Enable {
 		return nil, nil
 	}
 
 	// Determine the advertise address. Results in nil if not running
 	// distributed execution.
 	listenPort := uint16(t.Cfg.Server.HTTPListenPort)
-	advertiseAddr, err := t.Cfg.Querier.EngineV2.AdvertiseAddr(listenPort)
+	advertiseAddr, err := t.Cfg.QueryEngine.AdvertiseAddr(listenPort)
 	if err != nil {
 		return nil, err
 	}
@@ -1517,24 +1491,41 @@ func (t *Loki) initV2QueryEngineWorker() (services.Service, error) {
 		return nil, err
 	}
 
-	worker, err := engine_v2.NewWorker(engine_v2.WorkerParams{
-		Logger: log.With(util_log.Logger, "component", "query-engine-worker"),
+	logger := log.With(util_log.Logger, "component", "query-engine-worker")
+
+	workerParams := engine_v2.WorkerParams{
+		Logger: logger,
 		Bucket: store,
 
-		Config:   t.Cfg.Querier.EngineV2.Worker,
-		Executor: t.Cfg.Querier.EngineV2.Executor,
+		Config:   t.Cfg.QueryEngine.Worker,
+		Executor: t.Cfg.QueryEngine.Executor,
 
 		LocalScheduler: t.queryEngineV2Scheduler,
 
 		AdvertiseAddr: advertiseAddr,
 		Endpoint:      "/api/v2/frame",
-	})
+
+		Metastore: metastore.NewObjectMetastore(store, t.Cfg.DataObj.Metastore, logger, t.metastoreMetrics),
+
+		StreamFilterer: t.Cfg.QueryEngine.Executor.StreamFilterer,
+	}
+
+	worker, err := engine_v2.NewWorker(workerParams, prometheus.DefaultRegisterer)
 	if err != nil {
 		return nil, err
 	}
 
+	if err := worker.RegisterMetrics(prometheus.DefaultRegisterer); err != nil {
+		return nil, err
+	}
+	worker.Service().AddListener(services.NewListener(
+		nil, nil, nil,
+		func(_ services.State) { worker.UnregisterMetrics(prometheus.DefaultRegisterer) },
+		func(_ services.State, _ error) { worker.UnregisterMetrics(prometheus.DefaultRegisterer) },
+	))
+
 	// Only register HTTP handler when running distributed query execution
-	if t.Cfg.Querier.EngineV2.Distributed {
+	if t.Cfg.QueryEngine.Distributed {
 		worker.RegisterWorkerServer(t.Server.HTTP)
 	}
 
@@ -1640,24 +1631,24 @@ func (t *Loki) initRuler() (_ services.Service, err error) {
 		base_ruler.RegisterRulerServer(t.Server.GRPC, t.ruler)
 
 		// Prometheus Rule API Routes
-		t.Server.HTTP.Path("/prometheus/api/v1/rules").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.PrometheusRules)))
-		t.Server.HTTP.Path("/prometheus/api/v1/alerts").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.PrometheusAlerts)))
+		t.Server.HTTP.Path(constants.PathPrometheusRules).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.PrometheusRules)))
+		t.Server.HTTP.Path(constants.PathPrometheusAlerts).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.PrometheusAlerts)))
 
 		// Ruler Legacy API Routes
-		t.Server.HTTP.Path("/api/prom/rules").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
-		t.Server.HTTP.Path("/api/prom/rules/{namespace}").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
-		t.Server.HTTP.Path("/api/prom/rules/{namespace}").Methods("POST").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.CreateRuleGroup)))
-		t.Server.HTTP.Path("/api/prom/rules/{namespace}").Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteNamespace)))
-		t.Server.HTTP.Path("/api/prom/rules/{namespace}/{groupName}").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.GetRuleGroup)))
-		t.Server.HTTP.Path("/api/prom/rules/{namespace}/{groupName}").Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteRuleGroup)))
+		t.Server.HTTP.Path(constants.PathPromRules).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
+		t.Server.HTTP.Path(constants.PathPromRulesNamespace).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
+		t.Server.HTTP.Path(constants.PathPromRulesNamespace).Methods("POST").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.CreateRuleGroup)))
+		t.Server.HTTP.Path(constants.PathPromRulesNamespace).Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteNamespace)))
+		t.Server.HTTP.Path(constants.PathPromRulesNamespaceGroup).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.GetRuleGroup)))
+		t.Server.HTTP.Path(constants.PathPromRulesNamespaceGroup).Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteRuleGroup)))
 
 		// Ruler API Routes
-		t.Server.HTTP.Path("/loki/api/v1/rules").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
-		t.Server.HTTP.Path("/loki/api/v1/rules/{namespace}").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
-		t.Server.HTTP.Path("/loki/api/v1/rules/{namespace}").Methods("POST").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.CreateRuleGroup)))
-		t.Server.HTTP.Path("/loki/api/v1/rules/{namespace}").Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteNamespace)))
-		t.Server.HTTP.Path("/loki/api/v1/rules/{namespace}/{groupName}").Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.GetRuleGroup)))
-		t.Server.HTTP.Path("/loki/api/v1/rules/{namespace}/{groupName}").Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteRuleGroup)))
+		t.Server.HTTP.Path(constants.PathLokiRules).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
+		t.Server.HTTP.Path(constants.PathLokiRulesNamespace).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.ListRules)))
+		t.Server.HTTP.Path(constants.PathLokiRulesNamespace).Methods("POST").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.CreateRuleGroup)))
+		t.Server.HTTP.Path(constants.PathLokiRulesNamespace).Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteNamespace)))
+		t.Server.HTTP.Path(constants.PathLokiRulesNamespaceGroup).Methods("GET").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.GetRuleGroup)))
+		t.Server.HTTP.Path(constants.PathLokiRulesNamespaceGroup).Methods("DELETE").Handler(t.HTTPAuthMiddleware.Wrap(http.HandlerFunc(t.rulerAPI.DeleteRuleGroup)))
 	}
 
 	deleteStore, err := t.deleteRequestsClient("ruler", t.Overrides)
@@ -1896,10 +1887,10 @@ func (t *Loki) initCompactor() (services.Service, error) {
 	}
 
 	if t.Cfg.CompactorConfig.RetentionEnabled {
-		t.Server.HTTP.Path("/loki/api/v1/delete").Methods("PUT", "POST").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.AddDeleteRequestHandler))
-		t.Server.HTTP.Path("/loki/api/v1/delete").Methods("GET").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.GetAllDeleteRequestsHandler))
-		t.Server.HTTP.Path("/loki/api/v1/delete").Methods("DELETE").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.CancelDeleteRequestHandler))
-		t.Server.HTTP.Path("/loki/api/v1/cache/generation_numbers").Methods("GET").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.GetCacheGenerationNumberHandler))
+		t.Server.HTTP.Path(constants.PathLokiDelete).Methods("PUT", "POST").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.AddDeleteRequestHandler))
+		t.Server.HTTP.Path(constants.PathLokiDelete).Methods("GET").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.GetAllDeleteRequestsHandler))
+		t.Server.HTTP.Path(constants.PathLokiDelete).Methods("DELETE").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.CancelDeleteRequestHandler))
+		t.Server.HTTP.Path(constants.PathLokiCacheGenNumbers).Methods("GET").Handler(t.addCompactorMiddleware(t.compactor.DeleteRequestsHandler.GetCacheGenerationNumberHandler))
 		grpc.RegisterCompactorServer(t.Server.GRPC, t.compactor.DeleteRequestsGRPCHandler)
 	}
 
@@ -2219,7 +2210,10 @@ func (t *Loki) initPartitionRing() (services.Service, error) {
 		return nil, fmt.Errorf("creating KV store for partitions ring watcher: %w", err)
 	}
 
-	t.PartitionRingWatcher = ring.NewPartitionRingWatcher(ingester.PartitionRingName, ingester.PartitionRingKey, kvClient, util_log.Logger, prometheus.WrapRegistererWithPrefix("loki_", prometheus.DefaultRegisterer))
+	ringOptions := ring.DefaultPartitionRingOptions()
+	ringOptions.ShuffleShardCacheSize = t.Cfg.Ingester.KafkaIngestion.PartitionRingConfig.ShuffleShardCacheSize
+
+	t.PartitionRingWatcher = ring.NewPartitionRingWatcherWithOptions(ingester.PartitionRingName, ingester.PartitionRingKey, kvClient, ringOptions, util_log.Logger, prometheus.WrapRegistererWithPrefix("loki_", prometheus.DefaultRegisterer))
 	t.partitionRing = ring.NewPartitionInstanceRing(t.PartitionRingWatcher, t.ring, t.Cfg.Ingester.LifecyclerConfig.RingConfig.HeartbeatTimeout)
 
 	// Expose a web page to view the partitions ring state.
@@ -2347,10 +2341,14 @@ func (t *Loki) initDataObjConsumerPartitionRing() (services.Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KV store for dataobj ring watcher: %w", err)
 	}
-	t.DataObjConsumerPartitionRingWatcher = ring.NewPartitionRingWatcher(
+	ringOptions := ring.DefaultPartitionRingOptions()
+	ringOptions.ShuffleShardCacheSize = t.Cfg.DataObj.Consumer.PartitionRingConfig.ShuffleShardCacheSize
+
+	t.DataObjConsumerPartitionRingWatcher = ring.NewPartitionRingWatcherWithOptions(
 		consumer.PartitionRingName,
 		consumer.PartitionRingKey,
 		kvClient,
+		ringOptions,
 		util_log.Logger,
 		prometheus.WrapRegistererWithPrefix("loki_", prometheus.DefaultRegisterer),
 	)
@@ -2403,9 +2401,14 @@ func (t *Loki) initDataObjConsumer() (services.Service, error) {
 	httpMiddleware := middleware.Merge(
 		serverutil.RecoveryHTTPMiddleware,
 	)
-	t.Server.HTTP.Methods("POST", "GET", "DELETE").Path("/dataobj-consumer/prepare-delayed-downscale").Handler(
-		httpMiddleware.Wrap(http.HandlerFunc(t.dataObjConsumer.PrepareDelayedDownscaleHandler)),
-	)
+	t.Server.HTTP.
+		Methods(http.MethodGet, http.MethodPost, http.MethodDelete).
+		Path("/dataobj-consumer/prepare-downscale").
+		Handler(httpMiddleware.Wrap(http.HandlerFunc(t.dataObjConsumer.PrepareDownscaleHandler)))
+	t.Server.HTTP.
+		Methods(http.MethodGet, http.MethodPost, http.MethodDelete).
+		Path("/dataobj-consumer/prepare-delayed-downscale").
+		Handler(httpMiddleware.Wrap(http.HandlerFunc(t.dataObjConsumer.PrepareDelayedDownscaleHandler)))
 
 	return t.dataObjConsumer, nil
 }

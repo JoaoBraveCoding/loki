@@ -152,7 +152,7 @@ spec:
       {{- end }}
       {{- with .Values.read.dnsConfig | default .Values.loki.dnsConfig }}
       dnsConfig:
-        {{- tpl . $ | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
       {{- with .Values.read.nodeSelector }}
       nodeSelector:
@@ -204,6 +204,9 @@ spec:
           {{- toYaml .Values.read.persistence.accessModes | nindent 10 }}
         {{- with .Values.read.persistence.storageClass }}
         storageClassName: {{ if (eq "-" .) }}""{{ else }}{{ . }}{{ end }}
+        {{- end }}
+        {{- with .Values.read.persistence.volumeAttributesClassName }}
+        volumeAttributesClassName: {{ . }}
         {{- end }}
         resources:
           requests:

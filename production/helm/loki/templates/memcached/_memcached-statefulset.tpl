@@ -101,7 +101,7 @@ spec:
             limits:
               memory: {{ $requestMemory }}Mi
             requests:
-              cpu: 500m
+              cpu: {{ .allocatedCPU }}
               memory: {{ $requestMemory }}Mi
           {{- end }}
           ports:
@@ -201,6 +201,9 @@ spec:
         accessModes: [ "ReadWriteOnce" ]
         {{- with .persistence.storageClass }}
         storageClassName: {{ if (eq "-" .) }}""{{ else }}{{ . }}{{ end }}
+        {{- end }}
+        {{- with .persistence.volumeAttributesClassName }}
+        volumeAttributesClassName: {{ . }}
         {{- end }}
         resources:
           requests:

@@ -1,16 +1,12 @@
 package wire
 
 import (
-	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 
-	"github.com/apache/arrow-go/v18/arrow"
-	"github.com/apache/arrow-go/v18/arrow/ipc"
-	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/gogo/protobuf/proto"
 	"github.com/grafana/dskit/httpgrpc"
 	"github.com/oklog/ulid/v2"
@@ -19,18 +15,19 @@ import (
 	"github.com/grafana/loki/v3/pkg/engine/internal/proto/physicalpb"
 	protoUlid "github.com/grafana/loki/v3/pkg/engine/internal/proto/ulid"
 	"github.com/grafana/loki/v3/pkg/engine/internal/proto/wirepb"
+	arrowcodec "github.com/grafana/loki/v3/pkg/engine/internal/scheduler/wire/arrow"
 	"github.com/grafana/loki/v3/pkg/engine/internal/workflow"
-	xcapProto "github.com/grafana/loki/v3/pkg/xcap/proto"
+	"github.com/grafana/loki/v3/pkg/xcap"
 )
 
-var defaultFrameCodec = &protobufCodec{
-	allocator: memory.DefaultAllocator,
+var DefaultFrameCodec = &protobufCodec{
+	ArrowCodec: arrowcodec.DefaultArrowCodec,
 }
 
 // protobufCodec implements a protobuf-based codec for frames.
 // Messages are length-prefixed: [uvarint length][protobuf payload]
 type protobufCodec struct {
-	allocator memory.Allocator
+	*arrowcodec.ArrowCodec
 }
 
 // byteReaderAdapter adapts an io.Reader to io.ByteReader without buffering.
@@ -52,13 +49,13 @@ func (c *protobufCodec) EncodeTo(w io.Writer, frame Frame) error {
 	// Convert wire.Frame to protobuf
 	pbFrame, err := c.frameToPbFrame(frame)
 	if err != nil {
-		return fmt.Errorf("failed to convert frame to protobuf: %w", err)
+		panic(fmt.Errorf("failed to convert frame to protobuf: %w", err))
 	}
 
 	// Marshal to bytes
 	data, err := proto.Marshal(pbFrame)
 	if err != nil {
-		return fmt.Errorf("failed to marshal protobuf: %w", err)
+		panic(fmt.Errorf("failed to marshal protobuf: %w", err))
 	}
 
 	// Write length prefix (uvarint)
@@ -131,13 +128,9 @@ func (c *protobufCodec) frameFromPbFrame(f *wirepb.Frame) (Frame, error) {
 		return AckFrame{ID: k.Ack.Id}, nil
 
 	case *wirepb.Frame_Nack:
-		var err error
-		if k.Nack.Error != "" {
-			err = errors.New(k.Nack.Error)
-		}
 		return NackFrame{
 			ID:    k.Nack.Id,
-			Error: err,
+			Error: c.errorFromPb(k.Nack.Error),
 		}, nil
 
 	case *wirepb.Frame_Discard:
@@ -158,6 +151,17 @@ func (c *protobufCodec) frameFromPbFrame(f *wirepb.Frame) (Frame, error) {
 	}
 }
 
+func (c *protobufCodec) errorFromPb(errPb *wirepb.Error) *Error {
+	if errPb == nil {
+		return nil
+	}
+
+	return &Error{
+		Code:    errPb.Code,
+		Message: errPb.Message,
+	}
+}
+
 func (c *protobufCodec) messageFromPbMessage(mf *wirepb.MessageFrame) (Message, error) {
 	if mf == nil {
 		return nil, errors.New("nil message frame")
@@ -166,6 +170,9 @@ func (c *protobufCodec) messageFromPbMessage(mf *wirepb.MessageFrame) (Message, 
 	switch k := mf.Kind.(type) {
 	case *wirepb.MessageFrame_WorkerHello:
 		return WorkerHelloMessage{Threads: int(k.WorkerHello.Threads)}, nil
+
+	case *wirepb.MessageFrame_WorkerSubscribe:
+		return WorkerSubscribeMessage{}, nil
 
 	case *wirepb.MessageFrame_WorkerReady:
 		return WorkerReadyMessage{}, nil
@@ -234,7 +241,7 @@ func (c *protobufCodec) messageFromPbMessage(mf *wirepb.MessageFrame) (Message, 
 		}, nil
 
 	case *wirepb.MessageFrame_StreamData:
-		record, err := c.deserializeArrowRecord(k.StreamData.Data)
+		record, err := c.DeserializeArrowRecord(k.StreamData.Data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to deserialize arrow record: %w", err)
 		}
@@ -284,6 +291,10 @@ func (c *protobufCodec) taskFromPbTask(t *wirepb.Task) (*workflow.Task, error) {
 		Fragment: fragment,
 		Sources:  sources,
 		Sinks:    sinks,
+		MaxTimeRange: physical.TimeRange{
+			Start: t.MaxTimeRange.Start,
+			End:   t.MaxTimeRange.End,
+		},
 	}, nil
 }
 
@@ -303,13 +314,20 @@ func (c *protobufCodec) taskStatusFromPbTaskStatus(ts *wirepb.TaskStatus) (workf
 		status.Error = errors.New(pbErr.Description)
 	}
 
-	if pbCapture := ts.GetCapture(); pbCapture != nil {
-		capture, err := xcapProto.FromPbCapture(pbCapture)
-		if err != nil {
+	if captureData := ts.GetCapture(); len(captureData) > 0 {
+		capture := &xcap.Capture{}
+		if err := capture.UnmarshalBinary(captureData); err != nil {
 			return workflow.TaskStatus{}, fmt.Errorf("failed to unmarshal capture: %w", err)
 		}
 
 		status.Capture = capture
+	}
+
+	if ts.ContributingTimeRange != nil {
+		status.ContributingTimeRange = workflow.ContributingTimeRange{
+			Timestamp: ts.ContributingTimeRange.Timestamp,
+			LessThan:  ts.ContributingTimeRange.LessThan,
+		}
 	}
 
 	return status, nil
@@ -399,14 +417,10 @@ func (c *protobufCodec) frameToPbFrame(from Frame) (*wirepb.Frame, error) {
 		}
 
 	case NackFrame:
-		var errStr string
-		if v.Error != nil {
-			errStr = v.Error.Error()
-		}
 		f.Kind = &wirepb.Frame_Nack{
 			Nack: &wirepb.NackFrame{
 				Id:    v.ID,
-				Error: errStr,
+				Error: c.errorToPb(v.Error),
 			},
 		}
 
@@ -424,10 +438,21 @@ func (c *protobufCodec) frameToPbFrame(from Frame) (*wirepb.Frame, error) {
 		f.Kind = &wirepb.Frame_Message{Message: mf}
 
 	default:
-		return nil, fmt.Errorf("unknown frame type: %T", v)
+		panic(fmt.Errorf("unknown frame type: %T", v))
 	}
 
 	return f, nil
+}
+
+func (c *protobufCodec) errorToPb(e *Error) *wirepb.Error {
+	if e == nil {
+		return nil
+	}
+
+	return &wirepb.Error{
+		Code:    e.Code,
+		Message: e.Message,
+	}
 }
 
 func (c *protobufCodec) messageToPbMessage(from Message) (*wirepb.MessageFrame, error) {
@@ -441,6 +466,11 @@ func (c *protobufCodec) messageToPbMessage(from Message) (*wirepb.MessageFrame, 
 	case WorkerHelloMessage:
 		mf.Kind = &wirepb.MessageFrame_WorkerHello{
 			WorkerHello: &wirepb.WorkerHelloMessage{Threads: uint64(v.Threads)},
+		}
+
+	case WorkerSubscribeMessage:
+		mf.Kind = &wirepb.MessageFrame_WorkerSubscribe{
+			WorkerSubscribe: &wirepb.WorkerSubscribeMessage{},
 		}
 
 	case WorkerReadyMessage:
@@ -505,7 +535,7 @@ func (c *protobufCodec) messageToPbMessage(from Message) (*wirepb.MessageFrame, 
 
 	case StreamDataMessage:
 		// Serialize Arrow record to bytes
-		data, err := c.serializeArrowRecord(v.Data)
+		data, err := c.SerializeArrowRecord(v.Data)
 		if err != nil {
 			return nil, fmt.Errorf("failed to serialize arrow record: %w", err)
 		}
@@ -525,7 +555,7 @@ func (c *protobufCodec) messageToPbMessage(from Message) (*wirepb.MessageFrame, 
 		}
 
 	default:
-		return nil, fmt.Errorf("unknown message type: %T", v)
+		panic(fmt.Errorf("unknown message type: %T", v))
 	}
 
 	return mf, nil
@@ -557,12 +587,20 @@ func (c *protobufCodec) taskToPbTask(from *workflow.Task) (*wirepb.Task, error) 
 		Fragment: fragment,
 		Sources:  sources,
 		Sinks:    sinks,
+		MaxTimeRange: &physicalpb.TimeRange{
+			Start: from.MaxTimeRange.Start,
+			End:   from.MaxTimeRange.End,
+		},
 	}, nil
 }
 
 func (c *protobufCodec) taskStatusToPbTaskStatus(from workflow.TaskStatus) (*wirepb.TaskStatus, error) {
 	ts := &wirepb.TaskStatus{
 		State: c.taskStateToPbTaskState(from.State),
+		ContributingTimeRange: &wirepb.ContributingTimeRange{
+			Timestamp: from.ContributingTimeRange.Timestamp,
+			LessThan:  from.ContributingTimeRange.LessThan,
+		},
 	}
 
 	if from.Error != nil {
@@ -570,12 +608,12 @@ func (c *protobufCodec) taskStatusToPbTaskStatus(from workflow.TaskStatus) (*wir
 	}
 
 	if from.Capture != nil {
-		capture, err := xcapProto.ToPbCapture(from.Capture)
+		captureData, err := from.Capture.MarshalBinary()
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("failed to marshal capture: %w", err)
 		}
 
-		ts.Capture = capture
+		ts.Capture = captureData
 	}
 
 	return ts, nil
@@ -637,53 +675,4 @@ func (c *protobufCodec) nodeStreamMapToPbNodeStreamList(nodeMap map[physical.Nod
 	}
 
 	return result, nil
-}
-
-// serializeArrowRecord serializes an Arrow record to bytes using IPC format.
-func (c *protobufCodec) serializeArrowRecord(record arrow.RecordBatch) ([]byte, error) {
-	if record == nil {
-		return nil, errors.New("nil arrow record")
-	}
-
-	var buf bytes.Buffer
-	writer := ipc.NewWriter(&buf,
-		ipc.WithSchema(record.Schema()),
-		ipc.WithAllocator(c.allocator),
-	)
-	defer writer.Close()
-
-	if err := writer.Write(record); err != nil {
-		return nil, err
-	}
-
-	if err := writer.Close(); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-// deserializeArrowRecord deserializes an Arrow record from bytes using IPC format.
-func (c *protobufCodec) deserializeArrowRecord(data []byte) (arrow.RecordBatch, error) {
-	if len(data) == 0 {
-		return nil, errors.New("empty arrow data")
-	}
-
-	reader, err := ipc.NewReader(
-		bytes.NewReader(data),
-		ipc.WithAllocator(c.allocator),
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	if !reader.Next() {
-		if err := reader.Err(); err != nil {
-			return nil, err
-		}
-		return nil, errors.New("no record in arrow data")
-	}
-
-	rec := reader.RecordBatch()
-	return rec, nil
 }

@@ -134,9 +134,9 @@ func (b *Builder) Close() {
 }
 
 func (b *Builder) buildIndex(ctx context.Context) error {
-	var builderConfig indexobj.BuilderConfig
+	var builderConfig logsobj.BuilderConfig
 	builderConfig.RegisterFlagsWithPrefix("", flag.NewFlagSet("", flag.PanicOnError)) // Acquire defaults
-	indexBuilder, err := indexobj.NewBuilder(builderConfig, nil)
+	indexBuilder, err := indexobj.NewBuilder(builderConfig.BuilderBaseConfig, nil)
 	if err != nil {
 		return fmt.Errorf("creating logs builder: %w", err)
 	}
@@ -152,7 +152,7 @@ func (b *Builder) buildIndex(ctx context.Context) error {
 			return nil
 		}
 
-		reader, err := dataobj.FromBucket(ctx, b.bucket, name)
+		reader, err := dataobj.FromBucket(ctx, b.bucket, name, 0)
 		if err != nil {
 			return fmt.Errorf("reading object: %w", err)
 		}

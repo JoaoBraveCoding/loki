@@ -4,20 +4,21 @@ package indexobj
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"time"
 
-	"github.com/grafana/dskit/flagext"
 	lru "github.com/hashicorp/golang-lru/v2"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/prometheus/model/labels"
 
 	"github.com/grafana/loki/v3/pkg/dataobj"
+	"github.com/grafana/loki/v3/pkg/dataobj/consumer/logsobj"
 	"github.com/grafana/loki/v3/pkg/dataobj/metastore/multitenancy"
 	"github.com/grafana/loki/v3/pkg/dataobj/sections/indexpointers"
 	"github.com/grafana/loki/v3/pkg/dataobj/sections/pointers"
+	"github.com/grafana/loki/v3/pkg/dataobj/sections/postings"
+	"github.com/grafana/loki/v3/pkg/dataobj/sections/stats"
 	"github.com/grafana/loki/v3/pkg/dataobj/sections/streams"
 	"github.com/grafana/loki/v3/pkg/scratch"
 )
@@ -29,88 +30,6 @@ var (
 	ErrBuilderEmpty = errors.New("builder empty")
 )
 
-// BuilderConfig configures a [Builder].
-type BuilderConfig struct {
-	// TargetPageSize configures a target size for encoded pages within the data
-	// object. TargetPageSize accounts for encoding, but not for compression.
-	TargetPageSize flagext.Bytes `yaml:"target_page_size"`
-
-	// MaxPageRows configures a maximum row count for encoded pages within the data
-	// object. If set to 0 or negative number, the page size will not be limited by a
-	// row count.
-	MaxPageRows int `yaml:"max_page_rows"`
-
-	// TODO(rfratto): We need an additional parameter for TargetMetadataSize, as
-	// metadata payloads can't be split and must be downloaded in a single
-	// request.
-	//
-	// At the moment, we don't have a good mechanism for implementing a metadata
-	// size limit (we need to support some form of section splitting or column
-	// combinations), so the option is omitted for now.
-
-	// TargetObjectSize configures a target size for data objects.
-	TargetObjectSize flagext.Bytes `yaml:"target_object_size"`
-
-	// TargetSectionSize configures the maximum size of data in a section. Sections
-	// which support this parameter will place overflow data into new sections of
-	// the same type.
-	TargetSectionSize flagext.Bytes `yaml:"target_section_size"`
-
-	// BufferSize configures the size of the buffer used to accumulate
-	// uncompressed logs in memory prior to sorting.
-	BufferSize flagext.Bytes `yaml:"buffer_size"`
-
-	// SectionStripeMergeLimit configures the number of stripes to merge at once when
-	// flushing stripes into a section. MergeSize must be larger than 1. Lower
-	// values of MergeSize trade off lower memory overhead for higher time spent
-	// merging.
-	SectionStripeMergeLimit int `yaml:"section_stripe_merge_limit"`
-}
-
-// RegisterFlagsWithPrefix registers flags with the given prefix.
-func (cfg *BuilderConfig) RegisterFlagsWithPrefix(prefix string, f *flag.FlagSet) {
-	_ = cfg.TargetPageSize.Set("128KB")
-	_ = cfg.TargetObjectSize.Set("64MB")
-	_ = cfg.BufferSize.Set("2MB")
-	_ = cfg.TargetSectionSize.Set("16MB")
-
-	f.Var(&cfg.TargetPageSize, prefix+"target-page-size", "The size of the target page to use for the index object builder.")
-	f.IntVar(&cfg.MaxPageRows, prefix+"max-page-rows", 0, "The maximum row count for pages to use for the index builder. A value of 0 means no limit.")
-	f.Var(&cfg.TargetObjectSize, prefix+"target-object-size", "The size of the target object to use for the index object builder.")
-	f.Var(&cfg.TargetSectionSize, prefix+"target-section-size", "Configures a maximum size for sections, for sections that support it.")
-	f.Var(&cfg.BufferSize, prefix+"buffer-size", "The size of the buffer to use for sorting logs.")
-	f.IntVar(&cfg.SectionStripeMergeLimit, prefix+"section-stripe-merge-limit", 2, "The maximum number of stripes to merge into a section at once. Must be greater than 1.")
-}
-
-// Validate validates the BuilderConfig.
-func (cfg *BuilderConfig) Validate() error {
-	var errs []error
-
-	if cfg.TargetPageSize <= 0 {
-		errs = append(errs, errors.New("TargetPageSize must be greater than 0"))
-	} else if cfg.TargetPageSize >= cfg.TargetObjectSize {
-		errs = append(errs, errors.New("TargetPageSize must be less than TargetObjectSize"))
-	}
-
-	if cfg.TargetObjectSize <= 0 {
-		errs = append(errs, errors.New("TargetObjectSize must be greater than 0"))
-	}
-
-	if cfg.BufferSize <= 0 {
-		errs = append(errs, errors.New("BufferSize must be greater than 0"))
-	}
-
-	if cfg.TargetSectionSize <= 0 || cfg.TargetSectionSize > cfg.TargetObjectSize {
-		errs = append(errs, errors.New("SectionSize must be greater than 0 and less than or equal to TargetObjectSize"))
-	}
-
-	if cfg.SectionStripeMergeLimit < 2 {
-		errs = append(errs, errors.New("LogsMergeStripesMax must be greater than 1"))
-	}
-
-	return errors.Join(errs...)
-}
-
 // A Builder constructs a logs-oriented data object from a set of incoming
 // log data. Log data is appended by calling [LogBuilder.Append]. A complete
 // data object is constructed by by calling [LogBuilder.Flush].
@@ -118,17 +37,23 @@ func (cfg *BuilderConfig) Validate() error {
 // Methods on Builder are not goroutine-safe; callers are responsible for
 // synchronization.
 type Builder struct {
-	cfg     BuilderConfig
+	cfg     logsobj.BuilderBaseConfig
 	metrics *builderMetrics
 
 	labelCache *lru.Cache[string, labels.Labels]
 
 	currentSizeEstimate int
+	builderFull         bool
 
 	builder       *dataobj.Builder                  // Inner builder for accumulating sections.
 	streams       map[string]*streams.Builder       // The key is the TenantID.
 	pointers      map[string]*pointers.Builder      // The key is the TenantID.
 	indexPointers map[string]*indexpointers.Builder // The key is the TenantID.
+	stats         map[string]*stats.Builder         // The key is the TenantID.
+	postings      map[string]*postings.Builder      // The key is the TenantID.
+
+	// Optimization to avoid recalculating the size by asking all tenants for their estimated size.
+	unflushedSizeEstimate int
 
 	state builderState
 }
@@ -146,7 +71,7 @@ const (
 // NewBuilder creates a new [Builder] which stores log-oriented data objects.
 //
 // NewBuilder returns an error if the provided config is invalid.
-func NewBuilder(cfg BuilderConfig, scratchStore scratch.Store) (*Builder, error) {
+func NewBuilder(cfg logsobj.BuilderBaseConfig, scratchStore scratch.Store) (*Builder, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -170,6 +95,8 @@ func NewBuilder(cfg BuilderConfig, scratchStore scratch.Store) (*Builder, error)
 		streams:       make(map[string]*streams.Builder),
 		pointers:      make(map[string]*pointers.Builder),
 		indexPointers: make(map[string]*indexpointers.Builder),
+		stats:         make(map[string]*stats.Builder),
+		postings:      make(map[string]*postings.Builder),
 	}, nil
 }
 
@@ -177,27 +104,130 @@ func (b *Builder) GetEstimatedSize() int {
 	return b.currentSizeEstimate
 }
 
+func (b *Builder) IsFull() bool {
+	return b.builderFull
+}
+
+func (b *Builder) getIndexPointerBuilderForTenant(tenantID string) *indexpointers.Builder {
+	tenantIndexPointers, ok := b.indexPointers[tenantID]
+	if ok {
+		return tenantIndexPointers
+	}
+
+	tenantIndexPointers = indexpointers.NewBuilder(b.metrics.indexPointers, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
+	tenantIndexPointers.SetTenant(tenantID)
+
+	b.indexPointers[tenantID] = tenantIndexPointers
+
+	return tenantIndexPointers
+}
+
+func (b *Builder) getStatsBuilderForTenant(tenantID string) *stats.Builder {
+	if _, ok := b.stats[tenantID]; !ok {
+		sb := stats.NewBuilder(int(b.cfg.TargetSectionSize), stats.ColumnarEncoder)
+		sb.SetTenant(tenantID)
+		b.stats[tenantID] = sb
+	}
+	return b.stats[tenantID]
+}
+
+func (b *Builder) getPostingsBuilderForTenant(tenantID string) *postings.Builder {
+	if _, ok := b.postings[tenantID]; !ok {
+		pb := postings.NewBuilder(int(b.cfg.TargetSectionSize), postings.ColumnarEncoder)
+		pb.SetTenant(tenantID)
+		b.postings[tenantID] = pb
+	}
+	return b.postings[tenantID]
+}
+
+// AppendStat records a per-sort-key aggregate for a data object section.
+func (b *Builder) AppendStat(tenantID, objectPath string, sectionIdx int64,
+	sortSchema string, labels map[string]string, minTs, maxTs time.Time, rows int, uncompressedSize int64) error {
+
+	tenantStats := b.getStatsBuilderForTenant(tenantID)
+
+	tenantStats.Append(stats.Stat{
+		ObjectPath:       objectPath,
+		SectionIndex:     sectionIdx,
+		SortSchema:       sortSchema,
+		Labels:           labels,
+		MinTimestamp:     minTs.UnixNano(),
+		MaxTimestamp:     maxTs.UnixNano(),
+		RowCount:         int64(rows),
+		UncompressedSize: uncompressedSize,
+	})
+
+	// TODO: set b.state = builderStateDirty when we implement flush.
+	return nil
+}
+
+// AppendLabelPosting records a label-based posting for a data object column.
+func (b *Builder) AppendLabelPosting(tenantID, objectPath string, sectionIdx int64,
+	columnName string, labelValue string, streamIDBitmap []byte,
+	uncompressedSize int64, minTs, maxTs time.Time) error {
+
+	tenantPostings := b.getPostingsBuilderForTenant(tenantID)
+
+	tenantPostings.Append(postings.Posting{
+		Kind:             postings.KindLabel,
+		ObjectPath:       objectPath,
+		SectionIndex:     sectionIdx,
+		ColumnName:       columnName,
+		LabelValue:       labelValue,
+		BloomFilter:      nil,
+		StreamIDBitmap:   streamIDBitmap,
+		UncompressedSize: uncompressedSize,
+		MinTimestamp:     minTs.UnixNano(),
+		MaxTimestamp:     maxTs.UnixNano(),
+	})
+
+	// TODO: set b.state = builderStateDirty when we implement flush.
+	return nil
+}
+
+// AppendBloomPosting records a Bloom-filter posting for a data object column.
+func (b *Builder) AppendBloomPosting(tenantID, objectPath string, sectionIdx int64,
+	columnName string, bloomFilter []byte, streamIDBitmap []byte,
+	uncompressedSize int64, minTs, maxTs time.Time) error {
+
+	tenantPostings := b.getPostingsBuilderForTenant(tenantID)
+
+	tenantPostings.Append(postings.Posting{
+		Kind:             postings.KindBloom,
+		ObjectPath:       objectPath,
+		SectionIndex:     sectionIdx,
+		ColumnName:       columnName,
+		BloomFilter:      bloomFilter,
+		StreamIDBitmap:   streamIDBitmap,
+		UncompressedSize: uncompressedSize,
+		MinTimestamp:     minTs.UnixNano(),
+		MaxTimestamp:     maxTs.UnixNano(),
+	})
+
+	// TODO: set b.state = builderStateDirty when we implement flush.
+	return nil
+}
+
 func (b *Builder) AppendIndexPointer(tenantID string, path string, startTs time.Time, endTs time.Time) error {
 	b.metrics.appendsTotal.Inc()
 	newEntrySize := len(path) + 1 + 1 // path, startTs, endTs
 
 	if b.state != builderStateEmpty && b.currentSizeEstimate+newEntrySize > int(b.cfg.TargetObjectSize) {
-		return ErrBuilderFull
+		b.builderFull = true
 	}
 
 	timer := prometheus.NewTimer(b.metrics.appendTime)
 	defer timer.ObserveDuration()
 
-	tenantIndexPointers, ok := b.indexPointers[tenantID]
-	if !ok {
-		tenantIndexPointers = indexpointers.NewBuilder(b.metrics.indexPointers, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
-		tenantIndexPointers.SetTenant(tenantID)
-		b.indexPointers[tenantID] = tenantIndexPointers
-	}
+	tenantIndexPointers := b.getIndexPointerBuilderForTenant(tenantID)
+	preAppendSizeEstimate := tenantIndexPointers.EstimatedSize()
 
 	tenantIndexPointers.Append(path, startTs, endTs)
 
-	if tenantIndexPointers.EstimatedSize() > int(b.cfg.TargetSectionSize) {
+	postAppendSizeEstimate := tenantIndexPointers.EstimatedSize()
+	b.unflushedSizeEstimate += postAppendSizeEstimate - preAppendSizeEstimate
+
+	if postAppendSizeEstimate > int(b.cfg.TargetSectionSize) {
 		if err := b.builder.Append(tenantIndexPointers); err != nil {
 			return err
 		}
@@ -209,6 +239,20 @@ func (b *Builder) AppendIndexPointer(tenantID string, path string, startTs time.
 	return nil
 }
 
+func (b *Builder) getStreamsBuilderForTenant(tenantID string) *streams.Builder {
+	tenantStreams, ok := b.streams[tenantID]
+	if ok {
+		return tenantStreams
+	}
+
+	tenantStreams = streams.NewBuilder(b.metrics.streams, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
+	tenantStreams.SetTenant(tenantID)
+
+	b.streams[tenantID] = tenantStreams
+
+	return tenantStreams
+}
+
 // AppendStream appends a stream to the object's stream section, returning the stream ID within this object.
 func (b *Builder) AppendStream(tenantID string, stream streams.Stream) (int64, error) {
 	b.metrics.appendsTotal.Inc()
@@ -216,22 +260,22 @@ func (b *Builder) AppendStream(tenantID string, stream streams.Stream) (int64, e
 	newEntrySize := labelsEstimate(stream.Labels) + 2
 
 	if b.state != builderStateEmpty && b.currentSizeEstimate+newEntrySize > int(b.cfg.TargetObjectSize) {
-		return 0, ErrBuilderFull
+		b.builderFull = true
 	}
 
 	timer := prometheus.NewTimer(b.metrics.appendTime)
 	defer timer.ObserveDuration()
 
-	tenantStreams, ok := b.streams[tenantID]
-	if !ok {
-		tenantStreams = streams.NewBuilder(b.metrics.streams, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
-		tenantStreams.SetTenant(tenantID)
-		b.streams[tenantID] = tenantStreams
-	}
+	tenantStreams := b.getStreamsBuilderForTenant(tenantID)
+	preAppendSizeEstimate := tenantStreams.EstimatedSize()
+
 	// Record the stream in the stream section.
 	// Once to capture the min timestamp and uncompressed size, again to record the max timestamp.
 	streamID := tenantStreams.Record(stream.Labels, stream.MinTimestamp, stream.UncompressedSize)
 	_ = tenantStreams.Record(stream.Labels, stream.MaxTimestamp, 0)
+
+	postAppendSizeEstimate := tenantStreams.EstimatedSize()
+	b.unflushedSizeEstimate += postAppendSizeEstimate - preAppendSizeEstimate
 
 	b.currentSizeEstimate = b.estimatedSize()
 	b.state = builderStateDirty
@@ -256,6 +300,20 @@ func labelsEstimate(ls labels.Labels) int {
 	return keysSize + valuesSize/2
 }
 
+func (b *Builder) getPointersBuilderForTenant(tenantID string) *pointers.Builder {
+	tenantPointers, ok := b.pointers[tenantID]
+	if ok {
+		return tenantPointers
+	}
+
+	tenantPointers = pointers.NewBuilder(b.metrics.pointers, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
+	tenantPointers.SetTenant(tenantID)
+
+	b.pointers[tenantID] = tenantPointers
+
+	return tenantPointers
+}
+
 // Append buffers a stream to be written to a data object. Append returns an
 // error if the stream labels cannot be parsed or [ErrBuilderFull] if the
 // builder is full.
@@ -273,19 +331,19 @@ func (b *Builder) ObserveLogLine(tenantID string, path string, section int64, st
 	newEntrySize := 4 // ints and times compress well so we just need to make an estimate.
 
 	if b.state != builderStateEmpty && b.currentSizeEstimate+newEntrySize > int(b.cfg.TargetObjectSize) {
-		return ErrBuilderFull
+		b.builderFull = true
 	}
 
 	timer := prometheus.NewTimer(b.metrics.appendTime)
 	defer timer.ObserveDuration()
 
-	tenantPointers, ok := b.pointers[tenantID]
-	if !ok {
-		tenantPointers = pointers.NewBuilder(b.metrics.pointers, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
-		tenantPointers.SetTenant(tenantID)
-		b.pointers[tenantID] = tenantPointers
-	}
+	tenantPointers := b.getPointersBuilderForTenant(tenantID)
+	preAppendSizeEstimate := tenantPointers.EstimatedSize()
+
 	tenantPointers.ObserveStream(path, section, streamIDInObject, streamIDInIndex, ts, uncompressedSize)
+
+	postAppendSizeEstimate := tenantPointers.EstimatedSize()
+	b.unflushedSizeEstimate += postAppendSizeEstimate - preAppendSizeEstimate
 
 	b.currentSizeEstimate = b.estimatedSize()
 	b.state = builderStateDirty
@@ -309,23 +367,23 @@ func (b *Builder) AppendColumnIndex(tenantID string, path string, section int64,
 	newEntrySize := len(columnName) + 1 + 1 + len(valuesBloom) + 1
 
 	if b.state != builderStateEmpty && b.currentSizeEstimate+newEntrySize > int(b.cfg.TargetObjectSize) {
-		return ErrBuilderFull
+		b.builderFull = true
 	}
 
 	timer := prometheus.NewTimer(b.metrics.appendTime)
 	defer timer.ObserveDuration()
 
-	tenantPointers, ok := b.pointers[tenantID]
-	if !ok {
-		tenantPointers = pointers.NewBuilder(b.metrics.pointers, int(b.cfg.TargetPageSize), b.cfg.MaxPageRows)
-		tenantPointers.SetTenant(tenantID)
-		b.pointers[tenantID] = tenantPointers
-	}
+	tenantPointers := b.getPointersBuilderForTenant(tenantID)
+	preAppendSizeEstimate := tenantPointers.EstimatedSize()
+
 	tenantPointers.RecordColumnIndex(path, section, columnName, columnIndex, valuesBloom)
+
+	postAppendSizeEstimate := tenantPointers.EstimatedSize()
+	b.unflushedSizeEstimate += postAppendSizeEstimate - preAppendSizeEstimate
 
 	// If our logs section has gotten big enough, we want to flush it to the
 	// encoder and start a new section.
-	if tenantPointers.EstimatedSize() > int(b.cfg.TargetSectionSize) {
+	if postAppendSizeEstimate > int(b.cfg.TargetSectionSize) {
 		if err := b.builder.Append(tenantPointers); err != nil {
 			return err
 		}
@@ -338,15 +396,7 @@ func (b *Builder) AppendColumnIndex(tenantID string, path string, section int64,
 
 func (b *Builder) estimatedSize() int {
 	var size int
-	for _, tenantStreams := range b.streams {
-		size += tenantStreams.EstimatedSize()
-	}
-	for _, tenantPointers := range b.pointers {
-		size += tenantPointers.EstimatedSize()
-	}
-	for _, tenantIndexPointers := range b.indexPointers {
-		size += tenantIndexPointers.EstimatedSize()
-	}
+	size += b.unflushedSizeEstimate
 	size += b.builder.Bytes()
 	b.metrics.sizeEstimate.Set(float64(size))
 	return size
@@ -396,6 +446,14 @@ func (b *Builder) Flush() (*dataobj.Object, io.Closer, error) {
 		if tenantIndexPointers.EstimatedSize() > 0 {
 			flushErrors = append(flushErrors, b.builder.Append(tenantIndexPointers))
 		}
+	}
+
+	// Stats and postings builders - reset only (no-op flush until serialization lands)
+	for _, tenantStats := range b.stats {
+		tenantStats.Reset()
+	}
+	for _, tenantPostings := range b.postings {
+		tenantPostings.Reset()
 	}
 
 	if err := errors.Join(flushErrors...); err != nil {
@@ -457,9 +515,13 @@ func (b *Builder) Reset() {
 	clear(b.streams)
 	clear(b.pointers)
 	clear(b.indexPointers)
+	b.stats = make(map[string]*stats.Builder)
+	b.postings = make(map[string]*postings.Builder)
 
 	b.metrics.sizeEstimate.Set(0)
 	b.currentSizeEstimate = 0
+	b.unflushedSizeEstimate = 0
+	b.builderFull = false
 	b.state = builderStateEmpty
 }
 
@@ -475,4 +537,18 @@ func (b *Builder) RegisterMetrics(reg prometheus.Registerer) error {
 // UnregisterMetrics unregisters metrics about builder from reg.
 func (b *Builder) UnregisterMetrics(reg prometheus.Registerer) {
 	b.metrics.Unregister(reg)
+}
+
+// StatsBuilderForTenant returns the stats builder for the given tenant. If no
+// stats have been appended for this tenant, nil is returned.
+// This is intended for testing only.
+func (b *Builder) StatsBuilderForTenant(tenantID string) *stats.Builder {
+	return b.stats[tenantID]
+}
+
+// PostingsBuilderForTenant returns the postings builder for the given tenant. If no
+// postings have been appended for this tenant, nil is returned.
+// This is intended for testing only.
+func (b *Builder) PostingsBuilderForTenant(tenantID string) *postings.Builder {
+	return b.postings[tenantID]
 }

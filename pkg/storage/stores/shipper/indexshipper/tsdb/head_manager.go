@@ -110,6 +110,8 @@ type HeadManager struct {
 	shards                 int
 	activeHeads, prevHeads *tenantHeads
 
+	chunkFilter chunk.RequestChunkFilterer
+
 	Index
 
 	wg     sync.WaitGroup
@@ -143,7 +145,11 @@ func NewHeadManager(name string, logger log.Logger, dir string, metrics *Metrics
 			indices = append(indices, m.activeHeads)
 		}
 
-		return NewMultiIndex(IndexSlice(indices)), nil
+		idx := NewMultiIndex(IndexSlice(indices))
+		if m.chunkFilter != nil {
+			idx.SetChunkFilterer(m.chunkFilter)
+		}
+		return idx, nil
 	})
 
 	return m
@@ -248,12 +254,16 @@ func (m *HeadManager) Stop() error {
 	return m.buildTSDBFromHead(m.activeHeads)
 }
 
+func (m *HeadManager) SetChunkFilterer(chunkFilter chunk.RequestChunkFilterer) {
+	m.chunkFilter = chunkFilter
+}
+
 func (m *HeadManager) Append(userID string, ls labels.Labels, fprint uint64, chks index.ChunkMetas) error {
 	// TSDB doesnt need the __name__="log" convention the old chunk store index used.
 	// We must create a copy of the labels here to avoid mutating the existing
 	// labels when writing across index buckets.
 	b := labels.NewBuilder(ls)
-	b.Del(labels.MetricName)
+	b.Del(model.MetricNameLabel)
 	ls = b.Labels()
 
 	m.mtx.RLock()

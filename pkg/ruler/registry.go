@@ -320,6 +320,9 @@ func (r *walRegistry) getTenantRemoteWriteConfig(tenant string, base RemoteWrite
 			clt.SigV4Config.SecretKey = v.SecretKey
 			clt.SigV4Config.Profile = v.Profile
 			clt.SigV4Config.RoleARN = v.RoleARN
+			clt.SigV4Config.ExternalID = v.ExternalID
+			clt.SigV4Config.UseFIPSSTSEndpoint = v.UseFIPSSTSEndpoint
+			clt.SigV4Config.ServiceName = v.ServiceName
 		}
 
 		if v := r.overrides.RulerRemoteWriteConfig(tenant, id); v != nil {
@@ -407,6 +410,12 @@ func (n notReadyAppender) AppendCTZeroSample(_ storage.SeriesRef, _ labels.Label
 func (n notReadyAppender) AppendHistogramCTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64, _ *histogram.Histogram, _ *histogram.FloatHistogram) (storage.SeriesRef, error) {
 	return 0, errNotReady
 }
+func (n notReadyAppender) AppendHistogramSTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64, _ *histogram.Histogram, _ *histogram.FloatHistogram) (storage.SeriesRef, error) {
+	return 0, errNotReady
+}
+func (n notReadyAppender) AppendSTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64) (storage.SeriesRef, error) {
+	return 0, errNotReady
+}
 func (n notReadyAppender) SetOptions(_ *storage.AppendOptions) {}
 func (n notReadyAppender) Commit() error                       { return errNotReady }
 func (n notReadyAppender) Rollback() error                     { return errNotReady }
@@ -429,6 +438,12 @@ func (n discardingAppender) AppendCTZeroSample(_ storage.SeriesRef, _ labels.Lab
 	return 0, nil
 }
 func (n discardingAppender) AppendHistogramCTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64, _ *histogram.Histogram, _ *histogram.FloatHistogram) (storage.SeriesRef, error) {
+	return 0, nil
+}
+func (n discardingAppender) AppendHistogramSTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64, _ *histogram.Histogram, _ *histogram.FloatHistogram) (storage.SeriesRef, error) {
+	return 0, nil
+}
+func (n discardingAppender) AppendSTZeroSample(_ storage.SeriesRef, _ labels.Labels, _ int64, _ int64) (storage.SeriesRef, error) {
 	return 0, nil
 }
 func (n discardingAppender) SetOptions(_ *storage.AppendOptions) {}

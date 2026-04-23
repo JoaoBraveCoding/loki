@@ -37,13 +37,53 @@ The output is incredibly verbose as it shows the entire internal config struct u
 
 ## Main / Unreleased
 
-#### Distributor Max Receive Limits for uncompressed bytes
+### Breaking change: Drop support for non-TSDB stores in jsonnet lib 
+
+With the removal of deprecated storage backends, the Loki jsonnet library is also cleaned up to reflect these changes. Affected configuration flags are:
+
+- `$._config.using_shipper_store` - any usages defaulted to `true`
+- `$._config.using_boltdb_shipper` - any usages defaulted to `false`
+- `$._config.using_tsdb_shipper` - any usages defaulted to `true`
+
+This change may update both command line arguments and the Loki config. If you've been using or overriding one of the three aforementioned configuration options, please remove them and replace them with the new defaults.
+
+### Breaking change: Removal of deprecated storage backends
+
+We deprecated legacy storage backends in Loki 3.0 and now they are subsequently removed:
+- Google BigTable (for chunks and indexes)
+- Apache Cassandra (for chunks and indexes)
+- Amazon DynamoDB (for indexes)
+- gRPC Store (for chunks and indexes)
+- BoltDB (for indexes)
+
+Loki will fail to start if a deprecated and removed storage backend is referenced in the schema or storage configuration. You must not upgrade if you still use one of the above mentioned backends.
+
+Please refer to [Storage schema](https://grafana.com/docs/loki/<LOKI_VERSION>/operations/storage/schema/) for more information about how to evolve your schema.
+
+If the latest entry of your schema config is older than retention period of your data, then it is safe to remove any old entries from the `schema_config.configs` when upgrading.
+
+With the legacy backends removed, also the `table-manager` target and `table_manager` configuration block are removed, as they are not needed any more. If you have a `table_manager` configuration block in your `config.yaml` you can savely remove it completely.
+
+### Distributor Max Receive Limits for uncompressed bytes
 
 The next Loki release introduces a new configuration option (i.e. `-distibutor.max-recv-msg-size`) for the distributors to control the max receive size of uncompressed stream data. The new options's default value is set to `100MB`.
 
 Supported clients should check the configuration options for max send message size if applicable.
 
 ## Helm Chart Upgrades
+
+{{< admonition type="note" >}}
+With the move to the [Grafana-community/helm-charts repository](https://github.com/grafana-community/helm-charts), the chart numbering has changed. Major version updates signal breaking changes in the chart. For more information, refer to the [README](https://github.com/grafana-community/helm-charts/blob/main/charts/loki/README.md#upgrading).
+{{< /admonition >}}
+
+### Helm Chart 6.50.0 - Respect the global registry in the sidecar image
+
+If you prefixed the sidecar container with a private registry (`sidecar.image.repository`), this is no longer necessary and is deprecated as the global registry is used starting with Helm chart 6.46.1. Therefore please use `global.imageRegistry` or alternatively, `sidecar.image.registry` for more fine-grained control.
+
+### Helm Chart 6.50.0 - Uniform naming for image digest also in the sidecar image
+
+For most images used in the helm chart, a `.digest` is available to pin an image to a specific hash. The sidecar images diverges from this convention by introducing a `.tag`.
+Starting with Helm chart 6.46.1, the `.tag` is deprecated and `.digest` should be used.
 
 ### Helm Chart 6.34.0 - Zone-aware Ingester Breaking Change
 
@@ -60,6 +100,16 @@ Key points:
 - Requires manual StatefulSet deletion with `--cascade=orphan`
 - **No data loss** - PersistentVolumeClaims and data are preserved
 - New StatefulSets will be created with correct service references
+
+## 3.6.0
+
+### Loki 3.6.0
+
+#### Upgraded AWS SDK to v2
+
+Loki uses the official AWS SDK for configuring and communication with S3 object storage. Version 1 of the SDK reached its end of life on 31st, 2025, and therefore had to be replaced with Version 2. While the user-facing configuration in Loki did not change, internal functionality of the object store client did change, without affecting functionality of Loki.
+
+Please refer to the full release notes of v2 [https://github.com/aws/aws-sdk-go-v2/releases/tag/release-2025-01-15](https://github.com/aws/aws-sdk-go-v2/releases/tag/release-2025-01-15) for further information and whether you may be impacted by any of the changes. 
 
 ## 3.5.0
 

@@ -1,6 +1,7 @@
 package ingester
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"net"
@@ -12,8 +13,6 @@ import (
 	"time"
 
 	"go.uber.org/atomic"
-
-	"context"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -634,7 +633,7 @@ func TestIngester_asyncStoreMaxLookBack(t *testing.T) {
 			periodicConfigs: []config.PeriodConfig{
 				{
 					From:      config.DayTime{Time: now.Add(-24 * time.Hour)},
-					IndexType: "bigtable",
+					IndexType: "boltdb",
 				},
 			},
 		},
@@ -1726,6 +1725,10 @@ func (r *readRingMock) InstancesWithTokensInZoneCount(_ string) int {
 
 func (r *readRingMock) ZonesCount() int {
 	return 1
+}
+
+func (r *readRingMock) Zones() []string {
+	return []string{"zone1"}
 }
 
 func (r *readRingMock) HealthyInstancesInZoneCount() int {
