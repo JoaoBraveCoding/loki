@@ -464,6 +464,15 @@ type LokiTemplateSpec struct {
 	// +kubebuilder:validation:Optional
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Ruler pods"
 	Ruler *LokiComponentSpec `json:"ruler,omitempty"`
+
+	// IngestLimits defines the ingest limits component spec.
+	// This component is only deployed when using the ingest storage architecture
+	// and enforces per-tenant ingestion limits.
+	//
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Ingest Limits pods"
+	IngestLimits *LokiComponentSpec `json:"ingestLimits,omitempty"`
 }
 
 // ClusterProxy is the Proxy configuration when the cluster is behind a Proxy.
@@ -1115,6 +1124,67 @@ type RulesSpec struct {
 	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
 }
 
+// IngestStorageSpec defines the ingest storage architecture configuration.
+// When configured, Loki uses Kafka as a durable write-ahead log between
+// distributors and ingesters, decoupling write acknowledgment from ingester availability.
+type IngestStorageSpec struct {
+	// Kafka defines the connection configuration for a Kafka-compatible ingest storage backend
+	// (Apache Kafka, WarpStream, etc.).
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Configuration"
+	Kafka KafkaSpec `json:"kafka"`
+}
+
+// KafkaSpec defines the Kafka connection and authentication configuration.
+type KafkaSpec struct {
+	// Topic is the Kafka topic name used for log ingestion.
+	//
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +kubebuilder:default=loki
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Topic"
+	Topic string `json:"topic,omitempty"`
+
+	// Secret for Kafka connection and authentication.
+	// Name of a secret in the same namespace as the LokiStack custom resource.
+	//
+	// The secret must contain the following mandatory keys:
+	//   - readerAddress: Broker addresses for consumers (host:port, comma-separated)
+	//   - writerAddress: Broker addresses for producers (host:port, comma-separated)
+	//
+	// For SASL authentication, the secret must also contain:
+	//   - type:     One of SASL/PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+	//   - username: SASL username
+	//   - password: SASL password
+	//
+	// For mTLS authentication, set the type key to mTLS and configure
+	// the certificate and privateKey fields in the TLS spec instead.
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Secret"
+	Secret KafkaSecretSpec `json:"secret"`
+
+	// TLS configuration for the Kafka connection. 
+	//
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka TLS Config"
+	TLS *TLSSpec `json:"tls,omitempty"`
+}
+
+// KafkaSecretSpec is a secret reference for Kafka connection details.
+type KafkaSecretSpec struct {
+	// Name of a secret in the same namespace as the LokiStack custom resource.
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors="urn:alm:descriptor:io.kubernetes:Secret",displayName="Kafka Secret Name"
+	Name string `json:"name"`
+}
+
 // LokiStackSpec defines the desired state of LokiStack
 type LokiStackSpec struct {
 	// ManagementState defines if the CR should be managed by the operator or not.
@@ -1213,6 +1283,16 @@ type LokiStackSpec struct {
 	// +kubebuilder:validation:Optional
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Network Policies"
 	NetworkPolicies *NetworkPoliciesSpec `json:"networkPolicies,omitempty"`
+
+	// IngestStorage defines the ingest storage architecture configuration.
+	// When not set, the classical architecture is used where distributors write directly to ingesters.
+	// When set, distributors write to Kafka and ingesters consume from it, decoupling write
+	// availability from ingester state.
+	//
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors="urn:alm:descriptor:com.tectonic.ui:advanced",displayName="Ingest Storage"
+	IngestStorage *IngestStorageSpec `json:"ingestStorage,omitempty"`
 }
 
 type ReplicationSpec struct {
