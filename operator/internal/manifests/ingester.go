@@ -62,6 +62,10 @@ func BuildIngester(opts Options) ([]client.Object, error) {
 		return nil, err
 	}
 
+	if opts.Kafka != nil && opts.Kafka.SASL {
+		configureStatefulSetForKafka(statefulSet, opts.Stack.IngestStorage.Kafka.Secret.Name)
+	}
+
 	return []client.Object{
 		statefulSet,
 		NewIngesterGRPCService(opts),

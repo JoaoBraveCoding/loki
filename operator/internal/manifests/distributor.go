@@ -56,6 +56,10 @@ func BuildDistributor(opts Options) ([]client.Object, error) {
 		return nil, err
 	}
 
+	if opts.Kafka != nil && opts.Kafka.SASL {
+		configureDeploymentForKafka(deployment, opts.Stack.IngestStorage.Kafka.Secret.Name)
+	}
+
 	return []client.Object{
 		deployment,
 		NewDistributorGRPCService(opts),
