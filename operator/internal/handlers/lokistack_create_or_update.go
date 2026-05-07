@@ -19,6 +19,7 @@ import (
 	lokiv1 "github.com/grafana/loki/operator/api/loki/v1"
 	"github.com/grafana/loki/operator/internal/external/k8s"
 	"github.com/grafana/loki/operator/internal/handlers/internal/gateway"
+	"github.com/grafana/loki/operator/internal/handlers/internal/kafka"
 	"github.com/grafana/loki/operator/internal/handlers/internal/networkpolicy"
 	"github.com/grafana/loki/operator/internal/handlers/internal/rules"
 	"github.com/grafana/loki/operator/internal/handlers/internal/serviceaccounts"
@@ -64,6 +65,14 @@ func CreateOrUpdateLokiStack(
 		return nil, err
 	}
 
+	var kafkaOpts *manifests.KafkaOptions
+	if stack.Spec.IngestStorage != nil {
+		kafkaOpts, err = kafka.BuildOptions(ctx, k, &stack)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	baseDomain, tenants, err := gateway.BuildOptions(ctx, ll, k, &stack, fg)
 	if err != nil {
 		return nil, err
@@ -107,6 +116,7 @@ func CreateOrUpdateLokiStack(
 		Stack:                  stack.Spec,
 		Gates:                  fg,
 		ObjectStorage:          objStore,
+		Kafka:                  kafkaOpts,
 		CertRotationRequiredAt: certRotationRequiredAt,
 		AlertingRules:          alertingRules,
 		RecordingRules:         recordingRules,

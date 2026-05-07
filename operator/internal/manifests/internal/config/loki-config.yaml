@@ -6,6 +6,21 @@ chunk_store_config:
     embedded_cache:
       enabled: true
       max_size_mb: 500
+{{- with .Kafka }}
+kafka_config:
+  topic: {{ .Topic }}
+  reader_config:
+    address: {{ .ReaderAddress }}
+  writer_config:
+    address: {{ .WriterAddress }}
+{{- if .SASL }}
+  sasl_username: ${KAFKA_SASL_USERNAME}
+  sasl_password: ${KAFKA_SASL_PASSWORD}
+{{- end }}
+  auto_create_topic_enabled: true
+  consumer_group_offset_commit_interval: 1s
+  max_consumer_lag_at_startup: 15s
+{{- end }}
 common:
   storage:
     object_store:
@@ -106,10 +121,16 @@ compactor:
 {{- end }}
   delete_request_store: {{.ObjectStorage.SharedStore}}
 {{- end }}
-{{- if .OTLPAttributes.RemoveDefaultLabels }}
+{{- if or .Kafka .OTLPAttributes.RemoveDefaultLabels }}
 distributor:
+{{- if .Kafka }}
+  kafka_writes_enabled: true
+  ingester_writes_enabled: false
+{{- end }}
+{{- if .OTLPAttributes.RemoveDefaultLabels }}
   otlp_config:
     default_resource_attributes_as_index_labels: []
+{{- end }}
 {{- end }}
 frontend:
   tail_proxy_url: {{ .Querier.Protocol }}://{{ .Querier.FQDN }}:{{ .Querier.Port }}
@@ -160,6 +181,13 @@ ingester:
     enabled: true
     dir: {{ .WriteAheadLog.Directory }}
     replay_memory_ceiling: {{ .WriteAheadLog.ReplayMemoryCeiling }}
+{{- if .Kafka }}
+  kafka_ingestion:
+    enabled: true
+    partition_ring:
+      kvstore:
+        store: memberlist
+{{- end }}
 ingester_client:
   grpc_client_config:
     max_recv_msg_size: 67108864

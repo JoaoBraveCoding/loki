@@ -34,6 +34,8 @@ type Options struct {
 
 	ObjectStorage storage.Options
 
+	Kafka *KafkaOptions
+
 	OpenShiftOptions openshift.Options
 
 	Timeouts TimeoutConfig
@@ -116,6 +118,15 @@ type RulerSecret struct {
 	Password string
 	// BearerToken contains the token used for bearer authentication.
 	BearerToken string
+}
+
+// KafkaOptions holds the Kafka connection configuration extracted from the
+// user-provided secret and LokiStack spec.
+type KafkaOptions struct {
+	ReaderAddress string
+	WriterAddress string
+	Topic         string
+	SASL          bool
 }
 
 // TLSProfileSpec is the desired behavior of a TLSProfileType.

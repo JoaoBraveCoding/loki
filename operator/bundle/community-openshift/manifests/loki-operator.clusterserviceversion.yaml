@@ -152,7 +152,7 @@ metadata:
     categories: OpenShift Optional, Logging & Tracing, Observability
     certified: "false"
     containerImage: docker.io/grafana/loki-operator:0.10.1
-    createdAt: "2026-05-06T08:38:28Z"
+    createdAt: "2026-05-08T16:26:30Z"
     description: The Community Loki Operator provides Kubernetes native deployment
       and management of Loki and related logging components.
     features.operators.openshift.io/disconnected: "true"
@@ -300,6 +300,106 @@ spec:
         path: hashRing.type
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:select:memberlist
+      - description: |-
+          IngestStorage defines the ingest storage architecture configuration.
+          When not set, the classical architecture is used where distributors write directly to ingesters.
+          When set, distributors write to Kafka and ingesters consume from it, decoupling write
+          availability from ingester state.
+        displayName: Ingest Storage
+        path: ingestStorage
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:advanced
+      - description: |-
+          Kafka defines the connection configuration for a Kafka-compatible ingest storage backend
+          (Apache Kafka, WarpStream, etc.).
+        displayName: Kafka Configuration
+        path: ingestStorage.kafka
+      - description: |-
+          Secret for Kafka connection and authentication.
+          Name of a secret in the same namespace as the LokiStack custom resource.
+
+          The secret must contain the following mandatory keys:
+            - readerAddress: Broker addresses for consumers (host:port, comma-separated)
+            - writerAddress: Broker addresses for producers (host:port, comma-separated)
+
+          For SASL authentication, the secret must also contain:
+            - type:     One of SASL/PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+            - username: SASL username
+            - password: SASL password
+
+          For mTLS authentication, set the type key to mTLS and configure
+          the certificate and privateKey fields in the TLS spec instead.
+        displayName: Kafka Secret
+        path: ingestStorage.kafka.secret
+      - description: Name of a secret in the same namespace as the LokiStack custom
+          resource.
+        displayName: Kafka Secret Name
+        path: ingestStorage.kafka.secret.name
+        x-descriptors:
+        - urn:alm:descriptor:io.kubernetes:Secret
+      - description: TLS configuration for the Kafka connection.
+        displayName: Kafka TLS Config
+        path: ingestStorage.kafka.tls
+      - description: CA can be used to specify a custom list of trusted certificate
+          authorities.
+        displayName: Certificate Authority Bundle
+        path: ingestStorage.kafka.tls.ca
+      - description: ConfigMapName contains the name of the ConfigMap containing the
+          referenced value.
+        displayName: ConfigMap Name
+        path: ingestStorage.kafka.tls.ca.configMapName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: Name of the key used to get the value in either the referenced
+          ConfigMap or Secret.
+        displayName: Key Name
+        path: ingestStorage.kafka.tls.ca.key
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SecretName contains the name of the Secret containing the referenced
+          value.
+        displayName: Secret Name
+        path: ingestStorage.kafka.tls.ca.secretName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: Certificate points to the server certificate to use.
+        displayName: Certificate
+        path: ingestStorage.kafka.tls.certificate
+      - description: ConfigMapName contains the name of the ConfigMap containing the
+          referenced value.
+        displayName: ConfigMap Name
+        path: ingestStorage.kafka.tls.certificate.configMapName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: Name of the key used to get the value in either the referenced
+          ConfigMap or Secret.
+        displayName: Key Name
+        path: ingestStorage.kafka.tls.certificate.key
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SecretName contains the name of the Secret containing the referenced
+          value.
+        displayName: Secret Name
+        path: ingestStorage.kafka.tls.certificate.secretName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: PrivateKey points to the private key of the server certificate.
+        displayName: Private Key
+        path: ingestStorage.kafka.tls.privateKey
+      - description: Key contains the name of the key inside the referenced Secret.
+        displayName: Key Name
+        path: ingestStorage.kafka.tls.privateKey.key
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SecretName contains the name of the Secret containing the referenced
+          value.
+        displayName: Secret Name
+        path: ingestStorage.kafka.tls.privateKey.secretName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: Topic is the Kafka topic name used for log ingestion.
+        displayName: Kafka Topic
+        path: ingestStorage.kafka.topic
       - description: Limits defines the limits to be applied to log stream processing.
         displayName: Rate Limiting
         path: limits
@@ -849,6 +949,24 @@ spec:
       - description: Replicas defines the number of replica pods of the component.
         displayName: Replicas
         path: template.indexGateway.replicas
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:hidden
+      - description: |-
+          IngestLimits defines the ingest limits component spec.
+          This component is only deployed when using the ingest storage architecture
+          and enforces per-tenant ingestion limits.
+        displayName: Ingest Limits pods
+        path: template.ingestLimits
+      - description: |-
+          PodAntiAffinity defines the pod anti affinity scheduling rules to schedule pods
+          of a component.
+        displayName: PodAntiAffinity
+        path: template.ingestLimits.podAntiAffinity
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:podAntiAffinity
+      - description: Replicas defines the number of replica pods of the component.
+        displayName: Replicas
+        path: template.ingestLimits.replicas
         x-descriptors:
         - urn:alm:descriptor:com.tectonic.ui:hidden
       - description: Ingester defines the ingester component spec.

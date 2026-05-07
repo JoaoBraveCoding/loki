@@ -182,6 +182,7 @@ func ConfigOptions(opt Options) config.Options {
 		},
 		Shippers:              shippers,
 		ObjectStorage:         opt.ObjectStorage,
+		Kafka:                 kafkaOptions(opt.Kafka),
 		HTTPTimeouts:          opt.Timeouts.Loki,
 		EnableRemoteReporting: opt.Gates.GrafanaLabsUsageReport,
 		DiscoverLogLevels:     discoverLogLevels(&opt.Stack),
@@ -387,6 +388,18 @@ func retentionConfig(ls *lokiv1.LokiStackSpec) config.RetentionOptions {
 	return config.RetentionOptions{
 		Enabled:           true,
 		DeleteWorkerCount: deleteWorkerCount(ls.Size),
+	}
+}
+
+func kafkaOptions(opts *KafkaOptions) *config.KafkaOptions {
+	if opts == nil {
+		return nil
+	}
+	return &config.KafkaOptions{
+		ReaderAddress: opts.ReaderAddress,
+		WriterAddress: opts.WriterAddress,
+		Topic:         opts.Topic,
+		SASL:          opts.SASL,
 	}
 }
 

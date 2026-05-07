@@ -34,6 +34,8 @@ type Options struct {
 
 	ObjectStorage storage.Options
 
+	Kafka *KafkaOptions
+
 	HTTPTimeouts HTTPTimeoutConfig
 
 	Retention RetentionOptions

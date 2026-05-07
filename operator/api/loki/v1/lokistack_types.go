@@ -1476,6 +1476,10 @@ const (
 	ReasonStorageNeedsSchemaUpdate LokiStackConditionReason = "StorageNeedsSchemaUpdate"
 	// ReasonInsufficientIngesterReplicas when the ingester replicas are less than or equal to the replication factor. Which causes log ingestion to stop when ingester pods get restarted.
 	ReasonInsufficientIngesterReplicas LokiStackConditionReason = "InsufficientIngesterReplicas"
+	// ReasonMissingKafkaSecret when the required secret for Kafka connection is missing.
+	ReasonMissingKafkaSecret LokiStackConditionReason = "MissingKafkaSecret"
+	// ReasonInvalidKafkaSecret when the Kafka secret is missing required keys or has invalid values.
+	ReasonInvalidKafkaSecret LokiStackConditionReason = "InvalidKafkaSecret"
 )
 
 // PodStatus is a short description of the status a Pod can be in.
