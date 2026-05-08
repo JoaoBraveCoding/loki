@@ -1,0 +1,53 @@
+---
+# 3-broker Kafka with persistent storage and full replication.
+# No authentication (upstream Loki only supports SASL/PLAIN, which Strimzi does not offer).
+# Suitable for staging or production-like testing.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: broker
+  namespace: openshift-logging
+  labels:
+    strimzi.io/cluster: loki-kafka
+spec:
+  replicas: 3
+  roles:
+    - broker
+    - controller
+  storage:
+    type: persistent-claim
+    size: 150Gi
+    deleteClaim: false
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: loki-kafka
+  namespace: openshift-logging
+  annotations:
+    strimzi.io/node-pools: enabled
+spec:
+  kafka:
+    version: 4.2.0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaTopic
+metadata:
+  name: loki
+  namespace: openshift-logging
+  labels:
+    strimzi.io/cluster: loki-kafka
+spec:
+  partitions: 100
+  replicas: 3
+  config:
+    retention.ms: 86400000
