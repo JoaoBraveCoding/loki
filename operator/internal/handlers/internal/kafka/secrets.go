@@ -2,7 +2,6 @@ package kafka
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
@@ -15,93 +14,81 @@ import (
 	"github.com/grafana/loki/operator/internal/status"
 )
 
-const (
-	KeyReaderAddress = "readerAddress"
-	KeyWriterAddress = "writerAddress"
-	KeySASLMechanism = "saslMechanism"
-	KeyUsername       = "username"
-	KeyPassword       = "password"
-)
-
-var (
-	errSecretMissingField      = errors.New("missing secret field")
-	errSecretInvalidSASLConfig = errors.New("saslMechanism requires both username and password")
-)
-
-// BuildOptions validates the Kafka secret and returns KafkaOptions for config generation.
-// Returns a status.DegradedError if the secret is missing or invalid.
+// BuildOptions validates the Kafka configuration and returns KafkaOptions for config generation.
+// Returns a status.DegradedError if a referenced secret is missing or invalid.
 func BuildOptions(ctx context.Context, k k8s.Client, stack *lokiv1.LokiStack) (*manifests.KafkaOptions, error) {
-	secret, err := getSecret(ctx, k, stack)
-	if err != nil {
-		return nil, err
-	}
-
-	opts, err := extractSecrets(stack.Spec.IngestStorage.Kafka, secret)
-	if err != nil {
-		return nil, &status.DegradedError{
-			Message: fmt.Sprintf("Invalid MSK/Kafka secret contents: %s", err),
-			Reason:  lokiv1.ReasonInvalidKafkaSecret,
-			Requeue: false,
-		}
-	}
-
-	return opts, nil
-}
-
-func getSecret(ctx context.Context, k k8s.Client, stack *lokiv1.LokiStack) (*corev1.Secret, error) {
-	var secret corev1.Secret
-
-	key := client.ObjectKey{Name: stack.Spec.IngestStorage.Kafka.Secret.Name, Namespace: stack.Namespace}
-	if err := k.Get(ctx, key, &secret); err != nil {
-		if apierrors.IsNotFound(err) {
-			return nil, &status.DegradedError{
-				Message: "Missing MSK/Kafka secret",
-				Reason:  lokiv1.ReasonMissingKafkaSecret,
-				Requeue: false,
-			}
-		}
-		return nil, fmt.Errorf("failed to lookup MSK/Kafka secret: %w", err)
-	}
-
-	return &secret, nil
-}
-
-func extractSecrets(spec lokiv1.KafkaSpec, secret *corev1.Secret) (*manifests.KafkaOptions, error) {
-	readerAddr := stringFromSecret(secret, KeyReaderAddress)
-	if readerAddr == "" {
-		return nil, fmt.Errorf("%w: %s", errSecretMissingField, KeyReaderAddress)
-	}
-
-	writerAddr := stringFromSecret(secret, KeyWriterAddress)
-	if writerAddr == "" {
-		return nil, fmt.Errorf("%w: %s", errSecretMissingField, KeyWriterAddress)
-	}
-
-	saslMechanism := stringFromSecret(secret, KeySASLMechanism)
-	username := stringFromSecret(secret, KeyUsername)
-	password := stringFromSecret(secret, KeyPassword)
-
-	if saslMechanism != "" && (username == "" || password == "") {
-		return nil, errSecretInvalidSASLConfig
-	}
+	spec := stack.Spec.IngestStorage.Kafka
 
 	topic := spec.Topic
 	if topic == "" {
 		topic = "loki"
 	}
 
-	return &manifests.KafkaOptions{
-		ReaderAddress: readerAddr,
-		WriterAddress: writerAddr,
+	metadataTopic := spec.MetadataTopic
+	if metadataTopic == "" {
+		metadataTopic = topic + "-metadata"
+	}
+
+	opts := &manifests.KafkaOptions{
+		ReaderAddress: spec.ReaderAddress,
+		WriterAddress: spec.WriterAddress,
 		Topic:         topic,
-		SASL:          saslMechanism != "",
-	}, nil
+		MetadataTopic: metadataTopic,
+	}
+
+	if spec.Authentication != nil {
+		auth := spec.Authentication
+
+		username, err := resolveSecretReference(ctx, k, stack.Namespace, auth.Username)
+		if err != nil {
+			return nil, err
+		}
+
+		password, err := resolveSecretReference(ctx, k, stack.Namespace, auth.Password)
+		if err != nil {
+			return nil, err
+		}
+
+		opts.SASL = true
+		opts.SASLMechanism = string(auth.SASLMechanism)
+		opts.SASLUsername = manifests.SecretRef{
+			SecretName: auth.Username.SecretName,
+			Key:        auth.Username.Key,
+			Value:      username,
+		}
+		opts.SASLPassword = manifests.SecretRef{
+			SecretName: auth.Password.SecretName,
+			Key:        auth.Password.Key,
+			Value:      password,
+		}
+	}
+
+	return opts, nil
 }
 
-func stringFromSecret(secret *corev1.Secret, key string) string {
-	data, ok := secret.Data[key]
-	if !ok || len(data) == 0 {
-		return ""
+func resolveSecretReference(ctx context.Context, k k8s.Client, namespace string, ref *lokiv1.SecretReference) (string, error) {
+	var secret corev1.Secret
+	key := client.ObjectKey{Name: ref.SecretName, Namespace: namespace}
+
+	if err := k.Get(ctx, key, &secret); err != nil {
+		if apierrors.IsNotFound(err) {
+			return "", &status.DegradedError{
+				Message: fmt.Sprintf("Missing Kafka authentication secret: %s", ref.SecretName),
+				Reason:  lokiv1.ReasonMissingKafkaSecret,
+				Requeue: false,
+			}
+		}
+		return "", fmt.Errorf("failed to lookup Kafka secret %s: %w", ref.SecretName, err)
 	}
-	return string(data)
+
+	data, ok := secret.Data[ref.Key]
+	if !ok || len(data) == 0 {
+		return "", &status.DegradedError{
+			Message: fmt.Sprintf("Kafka secret %s is missing key %s", ref.SecretName, ref.Key),
+			Reason:  lokiv1.ReasonInvalidKafkaSecret,
+			Requeue: false,
+		}
+	}
+
+	return string(data), nil
 }

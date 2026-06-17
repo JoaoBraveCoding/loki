@@ -120,13 +120,24 @@ type RulerSecret struct {
 	BearerToken string
 }
 
+// SecretRef holds a reference to a key in a Secret along with its resolved value.
+type SecretRef struct {
+	SecretName string
+	Key        string
+	Value      string
+}
+
 // KafkaOptions holds the Kafka connection configuration extracted from the
-// user-provided secret and LokiStack spec.
+// LokiStack spec and referenced secrets.
 type KafkaOptions struct {
 	ReaderAddress string
 	WriterAddress string
 	Topic         string
+	MetadataTopic string
 	SASL          bool
+	SASLMechanism string
+	SASLUsername   SecretRef
+	SASLPassword  SecretRef
 }
 
 // TLSProfileSpec is the desired behavior of a TLSProfileType.

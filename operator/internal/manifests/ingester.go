@@ -63,7 +63,7 @@ func BuildIngester(opts Options) ([]client.Object, error) {
 	}
 
 	if opts.Kafka != nil && opts.Kafka.SASL {
-		configureStatefulSetForKafka(statefulSet, opts.Stack.IngestStorage.Kafka.Secret.Name)
+		configureStatefulSetForKafka(statefulSet, opts.Kafka)
 	}
 
 	return []client.Object{

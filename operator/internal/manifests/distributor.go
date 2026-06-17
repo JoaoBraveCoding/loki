@@ -57,7 +57,7 @@ func BuildDistributor(opts Options) ([]client.Object, error) {
 	}
 
 	if opts.Kafka != nil && opts.Kafka.SASL {
-		configureDeploymentForKafka(deployment, opts.Stack.IngestStorage.Kafka.Secret.Name)
+		configureDeploymentForKafka(deployment, opts.Kafka)
 	}
 
 	return []client.Object{

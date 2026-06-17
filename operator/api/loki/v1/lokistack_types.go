@@ -1176,27 +1176,41 @@ type KafkaSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Topic"
 	Topic string `json:"topic,omitempty"`
 
-	// Secret for Kafka connection and authentication.
-	// Name of a secret in the same namespace as the LokiStack custom resource.
+	// MetadataTopic is the Kafka topic name used by the ingest-limits component
+	// to track stream metadata. This topic is separate from the main ingestion topic
+	// and has its own partition count (default: 64).
+	// If not set, the operator will default to "{Topic}-metadata".
 	//
-	// The secret must contain the following mandatory keys:
-	//   - readerAddress: Broker addresses for consumers (host:port, comma-separated)
-	//   - writerAddress: Broker addresses for producers (host:port, comma-separated)
-	//
-	// For SASL authentication, the secret must also contain:
-	//   - type:     One of SASL/PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
-	//   - username: SASL username
-	//   - password: SASL password
-	//
-	// For mTLS authentication, set the type key to mTLS and configure
-	// the certificate and privateKey fields in the TLS spec instead.
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Metadata Topic"
+	MetadataTopic string `json:"metadataTopic,omitempty"`
+
+	// ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
 	//
 	// +required
 	// +kubebuilder:validation:Required
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Secret"
-	Secret KafkaSecretSpec `json:"secret"`
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Reader Address"
+	ReaderAddress string `json:"readerAddress"`
 
-	// TLS configuration for the Kafka connection. 
+	// WriterAddress defines the broker addresses for producers (host:port, comma-separated).
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Writer Address"
+	WriterAddress string `json:"writerAddress"`
+
+	// Authentication for Kafka SASL authentication.
+	//
+	// For mTLS authentication, configure the certificate and privateKey
+	// fields in the TLS spec instead.
+	//
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Authentication"
+	Authentication *KafkaAuthenticationSpec `json:"authentication,omitempty"`
+
+	// TLS configuration for the Kafka connection.
 	//
 	// +optional
 	// +kubebuilder:validation:Optional
@@ -1204,14 +1218,44 @@ type KafkaSpec struct {
 	TLS *TLSSpec `json:"tls,omitempty"`
 }
 
-// KafkaSecretSpec is a secret reference for Kafka connection details.
-type KafkaSecretSpec struct {
-	// Name of a secret in the same namespace as the LokiStack custom resource.
+// KafkaSASLMechanism defines the SASL mechanism for Kafka authentication.
+//
+// +kubebuilder:validation:Enum=PLAIN;SCRAM-SHA-256;SCRAM-SHA-512
+type KafkaSASLMechanism string
+
+const (
+	// KafkaSASLMechanismPlain uses SASL/PLAIN authentication.
+	KafkaSASLMechanismPlain KafkaSASLMechanism = "PLAIN"
+
+	// KafkaSASLMechanismSCRAMSHA256 uses SCRAM-SHA-256 authentication.
+	KafkaSASLMechanismSCRAMSHA256 KafkaSASLMechanism = "SCRAM-SHA-256"
+
+	// KafkaSASLMechanismSCRAMSHA512 uses SCRAM-SHA-512 authentication.
+	KafkaSASLMechanismSCRAMSHA512 KafkaSASLMechanism = "SCRAM-SHA-512"
+)
+
+// KafkaAuthenticationSpec defines the SASL authentication configuration for Kafka.
+type KafkaAuthenticationSpec struct {
+	// SASLMechanism defines the SASL mechanism to use for authentication.
 	//
 	// +required
 	// +kubebuilder:validation:Required
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,xDescriptors="urn:alm:descriptor:io.kubernetes:Secret",displayName="Kafka Secret Name"
-	Name string `json:"name"`
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="SASL Mechanism"
+	SASLMechanism KafkaSASLMechanism `json:"saslMechanism"`
+
+	// Username is a reference to the key in a Secret containing the SASL username.
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="SASL Username"
+	Username *SecretReference `json:"username"`
+
+	// Password is a reference to the key in a Secret containing the SASL password.
+	//
+	// +required
+	// +kubebuilder:validation:Required
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="SASL Password"
+	Password *SecretReference `json:"password"`
 }
 
 // LokiStackSpec defines the desired state of LokiStack

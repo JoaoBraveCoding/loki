@@ -105,30 +105,69 @@ spec:
                       Kafka defines the connection configuration for a Kafka-compatible ingest storage backend
                       (Apache Kafka, WarpStream, etc.).
                     properties:
-                      secret:
+                      authentication:
                         description: |-
-                          Secret for Kafka connection and authentication.
-                          Name of a secret in the same namespace as the LokiStack custom resource.
+                          Authentication for Kafka SASL authentication.
 
-                          The secret must contain the following mandatory keys:
-                            - readerAddress: Broker addresses for consumers (host:port, comma-separated)
-                            - writerAddress: Broker addresses for producers (host:port, comma-separated)
-
-                          For SASL authentication, the secret must also contain:
-                            - type:     One of SASL/PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
-                            - username: SASL username
-                            - password: SASL password
-
-                          For mTLS authentication, set the type key to mTLS and configure
-                          the certificate and privateKey fields in the TLS spec instead.
+                          For mTLS authentication, configure the certificate and privateKey
+                          fields in the TLS spec instead.
                         properties:
-                          name:
-                            description: Name of a secret in the same namespace as
-                              the LokiStack custom resource.
+                          password:
+                            description: Password is a reference to the key in a Secret
+                              containing the SASL password.
+                            properties:
+                              key:
+                                description: Key contains the name of the key inside
+                                  the referenced Secret.
+                                type: string
+                              secretName:
+                                description: SecretName contains the name of the Secret
+                                  containing the referenced value.
+                                type: string
+                            required:
+                            - key
+                            - secretName
+                            type: object
+                          saslMechanism:
+                            description: SASLMechanism defines the SASL mechanism
+                              to use for authentication.
+                            enum:
+                            - PLAIN
+                            - SCRAM-SHA-256
+                            - SCRAM-SHA-512
                             type: string
+                          username:
+                            description: Username is a reference to the key in a Secret
+                              containing the SASL username.
+                            properties:
+                              key:
+                                description: Key contains the name of the key inside
+                                  the referenced Secret.
+                                type: string
+                              secretName:
+                                description: SecretName contains the name of the Secret
+                                  containing the referenced value.
+                                type: string
+                            required:
+                            - key
+                            - secretName
+                            type: object
                         required:
-                        - name
+                        - password
+                        - saslMechanism
+                        - username
                         type: object
+                      metadataTopic:
+                        description: |-
+                          MetadataTopic is the Kafka topic name used by the ingest-limits component
+                          to track stream metadata. This topic is separate from the main ingestion topic
+                          and has its own partition count (default: 64).
+                          If not set, the operator will default to "{Topic}-metadata".
+                        type: string
+                      readerAddress:
+                        description: ReaderAddress defines the broker addresses for
+                          consumers (host:port, comma-separated).
+                        type: string
                       tls:
                         description: TLS configuration for the Kafka connection.
                         properties:
@@ -205,8 +244,13 @@ spec:
                         default: loki
                         description: Topic is the Kafka topic name used for log ingestion.
                         type: string
+                      writerAddress:
+                        description: WriterAddress defines the broker addresses for
+                          producers (host:port, comma-separated).
+                        type: string
                     required:
-                    - secret
+                    - readerAddress
+                    - writerAddress
                     type: object
                 required:
                 - kafka

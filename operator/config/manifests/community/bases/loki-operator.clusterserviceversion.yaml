@@ -221,28 +221,56 @@ spec:
         displayName: Kafka Configuration
         path: ingestStorage.kafka
       - description: |-
-          Secret for Kafka connection and authentication.
-          Name of a secret in the same namespace as the LokiStack custom resource.
+          Authentication for Kafka SASL authentication.
 
-          The secret must contain the following mandatory keys:
-            - readerAddress: Broker addresses for consumers (host:port, comma-separated)
-            - writerAddress: Broker addresses for producers (host:port, comma-separated)
-
-          For SASL authentication, the secret must also contain:
-            - type:     One of SASL/PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
-            - username: SASL username
-            - password: SASL password
-
-          For mTLS authentication, set the type key to mTLS and configure
-          the certificate and privateKey fields in the TLS spec instead.
-        displayName: Kafka Secret
-        path: ingestStorage.kafka.secret
-      - description: Name of a secret in the same namespace as the LokiStack custom
-          resource.
-        displayName: Kafka Secret Name
-        path: ingestStorage.kafka.secret.name
+          For mTLS authentication, configure the certificate and privateKey
+          fields in the TLS spec instead.
+        displayName: Kafka Authentication
+        path: ingestStorage.kafka.authentication
+      - description: Password is a reference to the key in a Secret containing the
+          SASL password.
+        displayName: SASL Password
+        path: ingestStorage.kafka.authentication.password
+      - description: Key contains the name of the key inside the referenced Secret.
+        displayName: Key Name
+        path: ingestStorage.kafka.authentication.password.key
         x-descriptors:
-        - urn:alm:descriptor:io.kubernetes:Secret
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SecretName contains the name of the Secret containing the referenced
+          value.
+        displayName: Secret Name
+        path: ingestStorage.kafka.authentication.password.secretName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SASLMechanism defines the SASL mechanism to use for authentication.
+        displayName: SASL Mechanism
+        path: ingestStorage.kafka.authentication.saslMechanism
+      - description: Username is a reference to the key in a Secret containing the
+          SASL username.
+        displayName: SASL Username
+        path: ingestStorage.kafka.authentication.username
+      - description: Key contains the name of the key inside the referenced Secret.
+        displayName: Key Name
+        path: ingestStorage.kafka.authentication.username.key
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: SecretName contains the name of the Secret containing the referenced
+          value.
+        displayName: Secret Name
+        path: ingestStorage.kafka.authentication.username.secretName
+        x-descriptors:
+        - urn:alm:descriptor:com.tectonic.ui:text
+      - description: |-
+          MetadataTopic is the Kafka topic name used by the ingest-limits component
+          to track stream metadata. This topic is separate from the main ingestion topic
+          and has its own partition count (default: 64).
+          If not set, the operator will default to "{Topic}-metadata".
+        displayName: Kafka Metadata Topic
+        path: ingestStorage.kafka.metadataTopic
+      - description: ReaderAddress defines the broker addresses for consumers (host:port,
+          comma-separated).
+        displayName: Kafka Reader Address
+        path: ingestStorage.kafka.readerAddress
       - description: TLS configuration for the Kafka connection.
         displayName: Kafka TLS Config
         path: ingestStorage.kafka.tls
@@ -306,6 +334,10 @@ spec:
       - description: Topic is the Kafka topic name used for log ingestion.
         displayName: Kafka Topic
         path: ingestStorage.kafka.topic
+      - description: WriterAddress defines the broker addresses for producers (host:port,
+          comma-separated).
+        displayName: Kafka Writer Address
+        path: ingestStorage.kafka.writerAddress
       - description: Limits defines the limits to be applied to log stream processing.
         displayName: Rate Limiting
         path: limits

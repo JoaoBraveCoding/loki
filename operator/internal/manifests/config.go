@@ -399,7 +399,9 @@ func kafkaOptions(opts *KafkaOptions) *config.KafkaOptions {
 		ReaderAddress: opts.ReaderAddress,
 		WriterAddress: opts.WriterAddress,
 		Topic:         opts.Topic,
+		MetadataTopic: opts.MetadataTopic,
 		SASL:          opts.SASL,
+		SASLMechanism: opts.SASLMechanism,
 	}
 }
 
