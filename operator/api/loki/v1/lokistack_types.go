@@ -1186,19 +1186,20 @@ type KafkaSpec struct {
 	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Metadata Topic"
 	MetadataTopic string `json:"metadataTopic,omitempty"`
 
-	// ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
+	// Address defines the broker addresses for producers (host:port, comma-separated).
 	//
 	// +required
 	// +kubebuilder:validation:Required
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Reader Address"
-	ReaderAddress string `json:"readerAddress"`
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Address"
+	Address string `json:"address"`
 
-	// WriterAddress defines the broker addresses for producers (host:port, comma-separated).
+	// ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
+	// If not set, defaults to Address.
 	//
-	// +required
-	// +kubebuilder:validation:Required
-	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Writer Address"
-	WriterAddress string `json:"writerAddress"`
+	// +optional
+	// +kubebuilder:validation:Optional
+	// +operator-sdk:csv:customresourcedefinitions:type=spec,displayName="Kafka Reader Address"
+	ReaderAddress string `json:"readerAddress,omitempty"`
 
 	// Authentication for Kafka SASL authentication.
 	//

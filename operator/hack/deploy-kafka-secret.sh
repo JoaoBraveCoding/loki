@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # Prints the Kafka bootstrap address from the Kafka CR status for use in the
-# LokiStack CR spec.ingestStorage.kafka.readerAddress / writerAddress fields.
+# LokiStack CR spec.ingestStorage.kafka.address field.
 #
 # Prerequisites:
 #   1. Streams for Apache Kafka operator installed via OLM
@@ -30,5 +30,4 @@ echo ""
 echo "  ingestStorage:"
 echo "    kafka:"
 echo "      topic: loki"
-echo "      readerAddress: ${BOOTSTRAP}"
-echo "      writerAddress: ${BOOTSTRAP}"
+echo "      address: ${BOOTSTRAP}"

@@ -1244,6 +1244,40 @@ MemberListSpec
 </tr></tbody>
 </table>
 
+## IngestStorageSpec { #loki-grafana-com-v1-IngestStorageSpec }
+<p>
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-LokiStackSpec">LokiStackSpec</a>)
+</p>
+<div>
+<p>IngestStorageSpec defines the ingest storage architecture configuration.
+When configured, Loki uses Kafka as a durable write-ahead log between
+distributors and ingesters, decoupling write acknowledgment from ingester availability.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>kafka</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-KafkaSpec">
+KafkaSpec
+</a>
+</em>
+</td>
+<td>
+<p>Kafka defines the connection configuration for a Kafka-compatible ingest storage backend
+(Apache Kafka, WarpStream, etc.).</p>
+</td>
+</tr>
+</tbody>
+</table>
+
 ## IngestionLimitSpec { #loki-grafana-com-v1-IngestionLimitSpec }
 <p>
 (<em>Appears on:</em><a href="#loki-grafana-com-v1-LimitsTemplateSpec">LimitsTemplateSpec</a>, <a href="#loki-grafana-com-v1-PerTenantLimitsTemplateSpec">PerTenantLimitsTemplateSpec</a>)
@@ -1411,6 +1445,189 @@ int32
 <td><p>InstanceAddrPodIP when using the public pod IP from the cluster&rsquo;s pod network.</p>
 </td>
 </tr></tbody>
+</table>
+
+## KafkaAuthenticationSpec { #loki-grafana-com-v1-KafkaAuthenticationSpec }
+<p>
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-KafkaSpec">KafkaSpec</a>)
+</p>
+<div>
+<p>KafkaAuthenticationSpec defines the SASL authentication configuration for Kafka.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>saslMechanism</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-KafkaSASLMechanism">
+KafkaSASLMechanism
+</a>
+</em>
+</td>
+<td>
+<p>SASLMechanism defines the SASL mechanism to use for authentication.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>username</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-SecretReference">
+SecretReference
+</a>
+</em>
+</td>
+<td>
+<p>Username is a reference to the key in a Secret containing the SASL username.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>password</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-SecretReference">
+SecretReference
+</a>
+</em>
+</td>
+<td>
+<p>Password is a reference to the key in a Secret containing the SASL password.</p>
+</td>
+</tr>
+</tbody>
+</table>
+
+## KafkaSASLMechanism { #loki-grafana-com-v1-KafkaSASLMechanism }
+(<code>string</code> alias)
+<p>
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-KafkaAuthenticationSpec">KafkaAuthenticationSpec</a>)
+</p>
+<div>
+<p>KafkaSASLMechanism defines the SASL mechanism for Kafka authentication.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Value</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody><tr><td><p>&#34;PLAIN&#34;</p></td>
+<td><p>KafkaSASLMechanismPlain uses SASL/PLAIN authentication.</p>
+</td>
+</tr><tr><td><p>&#34;SCRAM-SHA-256&#34;</p></td>
+<td><p>KafkaSASLMechanismSCRAMSHA256 uses SCRAM-SHA-256 authentication.</p>
+</td>
+</tr><tr><td><p>&#34;SCRAM-SHA-512&#34;</p></td>
+<td><p>KafkaSASLMechanismSCRAMSHA512 uses SCRAM-SHA-512 authentication.</p>
+</td>
+</tr></tbody>
+</table>
+
+## KafkaSpec { #loki-grafana-com-v1-KafkaSpec }
+<p>
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-IngestStorageSpec">IngestStorageSpec</a>)
+</p>
+<div>
+<p>KafkaSpec defines the Kafka connection and authentication configuration.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>
+<code>topic</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Topic is the Kafka topic name used for log ingestion.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>metadataTopic</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>MetadataTopic is the Kafka topic name used by the ingest-limits component
+to track stream metadata. This topic is separate from the main ingestion topic
+and has its own partition count (default: 64).
+If not set, the operator will default to &ldquo;{Topic}-metadata&rdquo;.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>address</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<p>Address defines the broker addresses for producers (host:port, comma-separated).</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>readerAddress</code><br/>
+<em>
+string
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
+If not set, defaults to Address.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>authentication</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-KafkaAuthenticationSpec">
+KafkaAuthenticationSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>Authentication for Kafka SASL authentication.</p>
+<p>For mTLS authentication, configure the certificate and privateKey
+fields in the TLS spec instead.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>tls</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-TLSSpec">
+TLSSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>TLS configuration for the Kafka connection.</p>
+</td>
+</tr>
+</tbody>
 </table>
 
 ## LimitsSpec { #loki-grafana-com-v1-LimitsSpec }
@@ -1826,6 +2043,9 @@ PodStatusMap
 </tr><tr><td><p>&#34;InvalidGatewayTenantSecret&#34;</p></td>
 <td><p>ReasonInvalidGatewayTenantSecret when the format of the secret is invalid.</p>
 </td>
+</tr><tr><td><p>&#34;InvalidKafkaSecret&#34;</p></td>
+<td><p>ReasonInvalidKafkaSecret when the Kafka secret is missing required keys or has invalid values.</p>
+</td>
 </tr><tr><td><p>&#34;InvalidObjectStorageCAConfigMap&#34;</p></td>
 <td><p>ReasonInvalidObjectStorageCAConfigMap when the format of the CA configmap is invalid.</p>
 </td>
@@ -1864,6 +2084,9 @@ for authentication is missing.</p>
 </tr><tr><td><p>&#34;MissingGatewayTenantSecret&#34;</p></td>
 <td><p>ReasonMissingGatewayTenantSecret when the required tenant secret
 for authentication is missing.</p>
+</td>
+</tr><tr><td><p>&#34;MissingKafkaSecret&#34;</p></td>
+<td><p>ReasonMissingKafkaSecret when the required secret for Kafka connection is missing.</p>
 </td>
 </tr><tr><td><p>&#34;MissingObjectStorageCAConfigMap&#34;</p></td>
 <td><p>ReasonMissingObjectStorageCAConfigMap when the required configmap to verify object storage
@@ -2183,6 +2406,23 @@ When enabled, the operator creates NetworkPolicies to control ingress/egress bet
 Loki components and related services.</p>
 </td>
 </tr>
+<tr>
+<td>
+<code>ingestStorage</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-IngestStorageSpec">
+IngestStorageSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>IngestStorage defines the ingest storage architecture configuration.
+When not set, the classical architecture is used where distributors write directly to ingesters.
+When set, distributors write to Kafka and ingesters consume from it, decoupling write
+availability from ingester state.</p>
+</td>
+</tr>
 </tbody>
 </table>
 
@@ -2451,6 +2691,22 @@ LokiComponentSpec
 <td>
 <em>(Optional)</em>
 <p>Ruler defines the ruler component spec.</p>
+</td>
+</tr>
+<tr>
+<td>
+<code>ingestLimits</code><br/>
+<em>
+<a href="#loki-grafana-com-v1-LokiComponentSpec">
+LokiComponentSpec
+</a>
+</em>
+</td>
+<td>
+<em>(Optional)</em>
+<p>IngestLimits defines the ingest limits component spec.
+This component is only deployed when using the ingest storage architecture
+and enforces per-tenant ingestion limits.</p>
 </td>
 </tr>
 </tbody>
@@ -4880,7 +5136,7 @@ the same namespace as the LokiStack object is in is used.</p>
 
 ## SecretReference { #loki-grafana-com-v1-SecretReference }
 <p>
-(<em>Appears on:</em><a href="#loki-grafana-com-v1-TLSSpec">TLSSpec</a>)
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-KafkaAuthenticationSpec">KafkaAuthenticationSpec</a>, <a href="#loki-grafana-com-v1-TLSSpec">TLSSpec</a>)
 </p>
 <div>
 <p>SecretReference encodes a reference to a single key in a Secret in the same namespace.</p>
@@ -4993,7 +5249,7 @@ SubjectKind
 
 ## TLSSpec { #loki-grafana-com-v1-TLSSpec }
 <p>
-(<em>Appears on:</em><a href="#loki-grafana-com-v1-GatewaySpec">GatewaySpec</a>)
+(<em>Appears on:</em><a href="#loki-grafana-com-v1-GatewaySpec">GatewaySpec</a>, <a href="#loki-grafana-com-v1-KafkaSpec">KafkaSpec</a>)
 </p>
 <div>
 <p>TLSSpec contains options for TLS connections.</p>

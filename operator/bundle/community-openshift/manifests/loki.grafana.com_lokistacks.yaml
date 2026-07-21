@@ -105,6 +105,10 @@ spec:
                       Kafka defines the connection configuration for a Kafka-compatible ingest storage backend
                       (Apache Kafka, WarpStream, etc.).
                     properties:
+                      address:
+                        description: Address defines the broker addresses for producers
+                          (host:port, comma-separated).
+                        type: string
                       authentication:
                         description: |-
                           Authentication for Kafka SASL authentication.
@@ -165,8 +169,9 @@ spec:
                           If not set, the operator will default to "{Topic}-metadata".
                         type: string
                       readerAddress:
-                        description: ReaderAddress defines the broker addresses for
-                          consumers (host:port, comma-separated).
+                        description: |-
+                          ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
+                          If not set, defaults to Address.
                         type: string
                       tls:
                         description: TLS configuration for the Kafka connection.
@@ -244,13 +249,8 @@ spec:
                         default: loki
                         description: Topic is the Kafka topic name used for log ingestion.
                         type: string
-                      writerAddress:
-                        description: WriterAddress defines the broker addresses for
-                          producers (host:port, comma-separated).
-                        type: string
                     required:
-                    - readerAddress
-                    - writerAddress
+                    - address
                     type: object
                 required:
                 - kafka

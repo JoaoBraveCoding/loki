@@ -239,6 +239,10 @@ spec:
           (Apache Kafka, WarpStream, etc.).
         displayName: Kafka Configuration
         path: ingestStorage.kafka
+      - description: Address defines the broker addresses for producers (host:port,
+          comma-separated).
+        displayName: Kafka Address
+        path: ingestStorage.kafka.address
       - description: |-
           Authentication for Kafka SASL authentication.
 
@@ -286,8 +290,9 @@ spec:
           If not set, the operator will default to "{Topic}-metadata".
         displayName: Kafka Metadata Topic
         path: ingestStorage.kafka.metadataTopic
-      - description: ReaderAddress defines the broker addresses for consumers (host:port,
-          comma-separated).
+      - description: |-
+          ReaderAddress defines the broker addresses for consumers (host:port, comma-separated).
+          If not set, defaults to Address.
         displayName: Kafka Reader Address
         path: ingestStorage.kafka.readerAddress
       - description: TLS configuration for the Kafka connection.
@@ -353,10 +358,6 @@ spec:
       - description: Topic is the Kafka topic name used for log ingestion.
         displayName: Kafka Topic
         path: ingestStorage.kafka.topic
-      - description: WriterAddress defines the broker addresses for producers (host:port,
-          comma-separated).
-        displayName: Kafka Writer Address
-        path: ingestStorage.kafka.writerAddress
       - description: Limits defines the limits to be applied to log stream processing.
         displayName: Rate Limiting
         path: limits

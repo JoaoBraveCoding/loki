@@ -29,9 +29,14 @@ func BuildOptions(ctx context.Context, k k8s.Client, stack *lokiv1.LokiStack) (*
 		metadataTopic = topic + "-metadata"
 	}
 
+	readerAddress := spec.ReaderAddress
+	if readerAddress == "" {
+		readerAddress = spec.Address
+	}
+
 	opts := &manifests.KafkaOptions{
-		ReaderAddress: spec.ReaderAddress,
-		WriterAddress: spec.WriterAddress,
+		ReaderAddress: readerAddress,
+		WriterAddress: spec.Address,
 		Topic:         topic,
 		MetadataTopic: metadataTopic,
 	}

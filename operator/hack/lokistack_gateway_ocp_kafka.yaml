@@ -26,5 +26,4 @@ spec:
   ingestStorage:
     kafka:
       topic: loki
-      readerAddress: loki-kafka-kafka-bootstrap.openshift-logging.svc.cluster.local:9092
-      writerAddress: loki-kafka-kafka-bootstrap.openshift-logging.svc.cluster.local:9092
+      address: loki-kafka-kafka-bootstrap.openshift-logging.svc.cluster.local:9092
